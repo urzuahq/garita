@@ -63,8 +63,9 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
   stays the gate (urzua RFC-3).
 - **No silent no-ops.** A check that examined nothing is a finding, never a pass. A trigger, scope or
   glob that matches nothing is reported.
-- **Deterministic blocks, advisory everything else.** Only a deterministic check can block. A
-  model-judged check can run, and can only warn.
+- **Deterministic by default.** A model-judged check warns. It blocks only where a declared risk
+  class requires it (RFC-2), and garita's own part stays deterministic: it checks that the verdict
+  exists, is pinned to the tree and says pass.
 - **Fail closed on garita, fail open on infrastructure.** A broken garita install or config blocks. A
   tool that crashes or times out is a `warn` finding naming the crash, not a spurious block and not a
   silent pass.
@@ -272,7 +273,8 @@ Receipts are what make budgets work (ยง4) and what make the ecosystem compose (ย
    transcript which checks ran, whether they passed, and whether they ran after the last edit. A
    receipt states all three, so the rules become exact and the model is asked only about the reply.
 4. **Model checks are advisory in garita.** A decision-agent-kit check can be a garita check with
-   `advisory: true`; its findings are capped at `warn`, so a gate's result stays reproducible.
+   `advisory: true`; its findings are capped at `warn`, so a gate's result stays reproducible. The
+   exception is a check a declared risk class requires (RFC-2).
 5. **One harness adapter layer, eventually.** urzua and decision-agent-kit each ship agent adapters;
    garita needs the same. Garita starts with its own Claude Code adapter and moves to a shared one only
    when all three need the same events.
@@ -322,7 +324,8 @@ x64) and Linux (x64 and arm64), and an npm wrapper for JavaScript repositories.
 - A linter or formatter of its own.
 - Hosted dashboards or a service. Receipts make one possible; it is not garita's scope.
 - Judging records. That is urzua.
-- Model-judged blocking. A decision model can advise through garita, never block.
+- Model-judged blocking outside a declared risk class (RFC-2). Anywhere else a model advises through
+  garita and never blocks.
 
 ## References
 
