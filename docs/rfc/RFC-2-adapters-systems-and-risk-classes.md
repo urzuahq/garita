@@ -96,7 +96,8 @@ risk:
 checks:
   right-test:
     system: 1
-    native: decision-agent-kit
+    native: right-test         # a tool built with decision-agent-kit
+    threshold: 0.8
     on: [push, ci]
   test-review:
     system: 2
@@ -140,6 +141,10 @@ RFC-1 said only a deterministic check can block. With risk classes that becomes:
   required verdict is written to a receipt pinned to the tree hash, the model and the prompt version.
   A later run over the same tree reads the receipt and does not ask again. The gate's result for a
   given tree is then stable, though it is not reproducible from scratch.
+- **A decision model returns a score, not prose.** A System 1 check declares the `threshold` its
+  score is judged against, and the verdict records both.
+- **A class should require only a measured check.** A System 1 or System 2 check that blocks should
+  state how often it misses and how often it speaks wrongly, measured on recorded changes.
 
 ### 5. Where each system runs
 
@@ -211,10 +216,11 @@ scope and reads its result unchanged.
 **urzua is the first native tool**, in System 0. RFC-1 already defines garita's output as the urzua
 contract (urzua RFC-3). `urzua check` returns one JSON object, `status`, `findings[]`, a
 files-examined count and `next_action`, and takes paths and `--base`. What it lacks, for this RFC, is
-a `describe` answer, and agreement on the key names it shares with garita: urzua reports
-`files_examined`, RFC-1 §5 writes `examined`.
+a `describe` answer and the shared examined key: urzua reports `files_examined`, and the contract's
+key is `examined`, an object with one count per unit (`{ "files": 38 }`).
 
-decision-agent-kit is the intended first System 1 tool.
+decision-agent-kit is the kit System 1 tools are built with. The first System 1 checks are expected
+to be tools built on it, not the kit itself.
 
 ### 8. Contract additions
 
@@ -225,7 +231,7 @@ decision-agent-kit is the intended first System 1 tool.
   "checks": [
     { "name": "lint", "system": 0, "status": "pass" },
     { "name": "right-test", "system": 1, "status": "pass",
-      "verdict": { "model": "…", "tree": "…", "receipt": "…" } },
+      "verdict": { "score": 0.93, "threshold": 0.8, "model": "…", "tree": "…", "receipt": "…" } },
     { "name": "test-review", "system": 2, "status": "skipped" }
   ]
 }
@@ -271,22 +277,22 @@ Decided by the maintainer on 2026-11-22:
   inference.
 - **A model's verdict blocks where a declared risk class requires it**, and garita checks
   deterministically that the verdict exists, is pinned to the tree and says pass.
+- **The examined key** is `examined`, an object with one count per unit (`files`, `tests`, ...).
+  urzua and garita both use it.
 
 ## Open questions
 
 1. **One contract.** Is the shared contract a document in urzua (RFC-3), in garita, or in its own
    repository, and how are its versions negotiated?
-2. **The examined key.** `files_examined` as urzua ships it, or `examined` as RFC-1 §5 writes it.
-   Phase 0 emits this key, so it is the one question here that cannot wait.
-3. **What the task is.** System 1 asks whether a test matches the task. Where does garita get the
+2. **What the task is.** System 1 asks whether a test matches the task. Where does garita get the
    task: the urzua record the change cites, the PR description, or a declared input per check?
-4. **What pins a verdict.** Tree hash, model and prompt version are proposed. Does a change to the
+3. **What pins a verdict.** Tree hash, model and prompt version are proposed. Does a change to the
    task, or to the risk policy, invalidate a cached verdict?
-5. **Which models count.** How a class names the models allowed to give a required verdict, and
+4. **Which models count.** How a class names the models allowed to give a required verdict, and
    whether a person can stand in for one.
-6. **Matching beyond paths.** Packages, records a change cites, labels. A label is set on the forge,
+5. **Matching beyond paths.** Packages, records a change cites, labels. A label is set on the forge,
    so a local run cannot see it; is that acceptable for a class that is judged only in CI?
-7. **Systems in urzua.** Should urzua's `embodiment.tiers` record the system that verified a claim,
+6. **Systems in urzua.** Should urzua's `embodiment.tiers` record the system that verified a claim,
    or does that stay a garita-only axis?
 
 ## Non-goals

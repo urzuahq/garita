@@ -66,9 +66,10 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
 - **Deterministic by default.** A model-judged check warns. It blocks only where a declared risk
   class requires it (RFC-2), and garita's own part stays deterministic: it checks that the verdict
   exists, is pinned to the tree and says pass.
-- **Fail closed on garita, fail open on infrastructure.** A broken garita install or config blocks. A
-  tool that crashes or times out is a `warn` finding naming the crash, not a spurious block and not a
-  silent pass.
+- **Fail closed on garita, fail open on infrastructure.** A broken garita install or config blocks, and
+  so does a tool that cannot be started (a missing binary, a command that does not resolve): exit 1.
+  A tool that started and then crashed or timed out is a `warn` finding naming the crash, never a
+  silent pass; `on_crash: fail` makes it block.
 - **Orchestrate, don't replace.** Garita calls Turbo, cargo, oxlint, tsc, Vitest and urzua. It does not
   cache build outputs or compute a package graph itself.
 - **Opt-in configuration.** A repository with no `.garita/config.yaml` gets nothing it did not ask for.
@@ -91,6 +92,7 @@ Each check and each trigger declares a **budget**, and a budget is a gate in its
 
 ```yaml
 schema_version: 1
+requires: ">=0.1.0"          # the oldest garita that may run this config
 
 triggers:
   commit: { scope: staged,   budget: { duration: 3s } }
@@ -101,6 +103,8 @@ triggers:
 budgets:
   on_exceed: demote          # warn | fail | demote
   regression: { window: 20, threshold: 25% }
+
+on_crash: warn              # warn | fail
 
 merge:
   mode: status               # admin | status | auto
@@ -147,6 +151,10 @@ Every key above is a configuration point with a default; a repository declares o
 files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose parser
 reports zero files examined when it was given files is a `warn`.
 
+The `staged` scope reads files from the working tree, not the index. A staged file that also has
+unstaged changes is checked with those changes included, so garita reports it as a `partly-staged`
+finding at `warn`.
+
 ### 4. Budgets are gates
 
 Problems in an agentic stack rarely arrive as a failure. They creep in: a check grows from two seconds to
@@ -157,7 +165,12 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 - **Budget findings.** A check or trigger that runs over its budget produces a `budget` finding, with
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
   reports it, `fail` blocks, and `demote` moves the check to the next trigger (commit to push, push to
-  CI) for this run and reports that it did. A check can override the repository's `on_exceed`.
+  CI). A check that has run cannot be un-run, so the over-budget run reports the finding and the
+  demotion takes effect from the next run: garita reads the last receipt for that check and trigger,
+  skips the check there with a `demoted` finding at `info`, and runs it at the later trigger. It
+  stays demoted, visibly, until a run at its own trigger comes in under budget
+  (`garita run <check> --trigger <trigger>` forces one). A check can override the repository's
+  `on_exceed`.
 - **Regression findings.** Receipts carry every check's duration, so garita compares a run against the
   median of the last `window` runs of that check on the same trigger. A rise past `threshold` is a
   `budget-regression` finding even while the check is still under its absolute budget: the creep is
@@ -177,13 +190,14 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   "status": "fail",
   "trigger": "push",
   "commit": "1b29de5ea",
+  "tree": "9c1e4f2ab",
   "scope": { "kind": "affected", "packages": ["frontend"] },
   "checks": [
     {
       "name": "lint",
       "status": "fail",
       "duration_ms": 412,
-      "examined": 38,
+      "examined": { "files": 38 },
       "findings": [
         {
           "severity": "error",
@@ -198,7 +212,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
     }
   ],
   "next_action": "garita run lint --files ts/frontend/src/App.tsx",
-  "receipt": ".garita/receipts/1b29de5ea-push.json"
+  "receipt": ".garita/receipts/20261121T031502Z-push-7f3a9c.json"
 }
 ```
 
@@ -206,7 +220,9 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   own errors, which always block.
 - `next_action` is the narrowest command that re-runs what failed: the failing check, on the failing
   files or package. It is `null` on a pass.
-- `examined` is what the check actually covered, which is how a no-op is caught.
+- `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),
+  which is how a no-op is caught.
+- `commit` is `null` at the commit trigger, where no commit exists yet. `tree` is always present.
 - `--format sarif` and `--format junit` render the same result for code scanning and CI summaries. JSON
   is the source; the others are views of it.
 
@@ -233,6 +249,9 @@ real parsers, so a finding carries file, line, rule and message:
 | CI | `garita run --trigger ci --format sarif` | Same config, same verdict; no workflow re-lists the checks |
 | Merge | `garita merge <PR>`: merges the PR into the target branch in a throwaway worktree, runs the `merge` trigger there, acts on `pass` as `merge.mode` says, then removes the worktree | Gates the merged result, not the branch, and works when CI is unavailable |
 
+An installed git hook exits non-zero, with a message, when `garita` is not on the machine or is older
+than the config's `requires`. A machine without garita must not read as a pass.
+
 `merge.mode` decides what a green merge gate does. `status` posts a `garita/merge` commit status on the
 PR's head, which branch protection can require, and merges nothing. `auto` posts the status and turns on
 the forge's auto-merge, so the PR merges once every required check is green. `admin` merges the PR
@@ -246,6 +265,12 @@ Every run writes a receipt: the full JSON result plus the tree hash, the machine
 Receipts live under `.garita/receipts/` (ignored by git) and, in CI, in the run's artifacts. Per urzua
 RFC-3 §5, a run is self-dating and self-scoping, and the receipt is the history: garita keeps no log in
 the repository.
+
+A receipt is named for when it ran, `<UTC timestamp>-<trigger>-<run id>.json`, never for the commit.
+At the commit trigger no commit exists yet, and a second run must not overwrite the first: the runs
+are the history that budgets and demotion read. The tree hash, and the commit when there is one, are
+fields inside. Each check's entry records the exact command, its scope and whether the working tree
+was dirty, so a receipt can be cited as evidence of what ran.
 
 A **local receipt** is one written on a developer's or an agent's machine; a **CI receipt** is one
 written by a CI run. A local receipt is a file anyone on that machine can edit, so it proves only what
@@ -310,6 +335,7 @@ x64) and Linux (x64 and arm64), and an npm wrapper for JavaScript repositories.
 - **Merge authority:** a configuration point, `merge.mode` (§7), defaulting to `status`.
 - **Local receipts as evidence:** a configuration point, `evidence.accept` (§8), defaulting to `ci`.
 - **A check over budget:** a finding, and `on_exceed: demote` moves it to a later trigger (§4).
+- **The examined count:** an object with one count per unit, a key shared with urzua (RFC-2).
 
 ## Open questions
 
