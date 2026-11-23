@@ -21,7 +21,7 @@ make. Until the secrets are set, `prepare-release.yml` prints a notice and does 
    - have an empty bypass list.
 6. Confirm that the `release` branch and `v*` tags are not covered by any rule. A rule covering
    `release` blocks the workflow's force-push of that branch, and a rule covering `v*` blocks the tag
-   that `knope release` pushes with `GITHUB_TOKEN` in `publish-release.yml`.
+   that `knope release` creates with `GITHUB_TOKEN` in `publish-release.yml`.
 7. Confirm that the `no-changeset` label exists. It is already created; the release pull request is
    given it because it consumes changesets instead of adding one.
 
@@ -43,7 +43,13 @@ and `garita-aarch64-apple-darwin.tar.gz`.
 - Only one of the two secrets is set: the run fails with a message saying both must be set. A
   half-configured App is an error.
 - A wrong Client ID or a malformed key: the run fails at the token step.
-- The ruleset covering `release` or `v*`: the branch push or the tag push is rejected.
+- The ruleset covering `release` or `v*`: the branch push or the tag is rejected.
+- A publish run that fails after the release was created: use "Re-run failed jobs", not "Re-run all
+  jobs". The tag and the release already exist, so creating them again fails before anything is
+  built.
+- A release with no binaries: the release is public as soon as it is created and its two archives
+  are attached a few minutes later. If the build fails, the release stays without them until the
+  failed jobs are re-run.
 - The ruleset requiring approvals: a sole maintainer cannot merge the release pull request.
 
 ## Rotating the key
