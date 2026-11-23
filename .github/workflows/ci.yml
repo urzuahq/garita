@@ -2,18 +2,20 @@ name: ci
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+# Only new commits cancel a run. A label, or a second event on the same commit, waits its turn, so
+# the run for the latest event finishes last and no cancelled run leaves a failed `ci` on the commit
+# the ruleset is judging.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
 
 jobs:
   checks:
