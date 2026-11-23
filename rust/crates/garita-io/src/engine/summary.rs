@@ -1,4 +1,4 @@
-use garita_core::adapter::{is_noise, sanitize};
+use garita_core::adapter::{is_noise, is_notable, sanitize};
 use garita_core::report::{CheckStatus, Report, RunStatus, Severity};
 
 /// The error under one `error:` label, its later lines indented beneath it.
@@ -44,7 +44,11 @@ pub fn summary(report: &Report) -> String {
             CheckStatus::NotRun => "not-run",
         };
         let detail = headline(report, &check.name);
-        lines.push(format!("  {}: {status}{detail}", check.name));
+        lines.push(format!(
+            "  {}: {status}{detail}{}",
+            check.name,
+            suppressed(&check.suppressed)
+        ));
     }
     let checks: Vec<&str> = report.checks.iter().map(|c| c.name.as_str()).collect();
     for f in report
@@ -58,6 +62,27 @@ pub fn summary(report: &Report) -> String {
         lines.push(format!("  next: {next}"));
     }
     lines.join("\n")
+}
+
+/// ` [642 warnings suppressed]`, or nothing.
+fn suppressed(counts: &std::collections::BTreeMap<Severity, u64>) -> String {
+    let parts: Vec<String> = counts
+        .iter()
+        .map(|(severity, n)| {
+            let noun = match severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+                Severity::Info => "info finding",
+            };
+            let s = if *n == 1 { "" } else { "s" };
+            format!("{n} {noun}{s}")
+        })
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [{} suppressed]", parts.join(", "))
+    }
 }
 
 fn rank(severity: Severity) -> u8 {
@@ -92,19 +117,16 @@ fn clip(line: &str) -> &str {
     line.get(..end).unwrap_or_default()
 }
 
-/// The last `stderr:` line that is not noise, else the first `notable:` line, else the last
-/// line of `stdout:` or of an unlabelled block that is not noise. A tool's final word on stderr
-/// is its most reliable reason; notable lines stand in when stderr is empty or only noise.
+/// What the tool said was wrong: the last notable stderr line, else the last stderr line that is
+/// not noise, else the first notable stdout line, else the last stdout line that is not noise.
+/// An unlabelled block's stream is unknown, so it is read as stderr.
 fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
-    let mut section = "";
-    let mut notable = None;
-    let mut stderr = None;
-    let mut other = None;
+    const LABELS: [&str; 4] = ["stderr notable:", "stdout notable:", "stderr:", "stdout:"];
+    let mut section = "stderr:";
+    let (mut err_notable, mut err_last) = (None, None);
+    let (mut out_notable, mut out_last) = (None, None);
     for line in lines.map(str::trim).filter(|l| !l.is_empty()) {
-        if let Some(label) = ["notable:", "stderr:", "stdout:"]
-            .into_iter()
-            .find(|l| *l == line)
-        {
+        if let Some(label) = LABELS.into_iter().find(|l| *l == line) {
             section = label;
             continue;
         }
@@ -112,14 +134,25 @@ fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
             continue;
         }
         match section {
-            "notable:" => {
-                notable.get_or_insert(line);
+            "stderr notable:" => err_notable = Some(line),
+            "stdout notable:" => {
+                out_notable.get_or_insert(line);
             }
-            "stderr:" => stderr = Some(line),
-            _ => other = Some(line),
+            "stderr:" => {
+                if is_notable(line) {
+                    err_notable = Some(line);
+                }
+                err_last = Some(line);
+            }
+            _ => {
+                if is_notable(line) {
+                    out_notable.get_or_insert(line);
+                }
+                out_last = Some(line);
+            }
         }
     }
-    stderr.or(notable).or(other)
+    err_notable.or(err_last).or(out_notable).or(out_last)
 }
 
 /// ` - <place><rule> <message>` for the check's first finding of its worst severity, with how
@@ -186,6 +219,7 @@ mod tests {
             duration_ms: 1,
             examined: Default::default(),
             rerun: None,
+            suppressed: Default::default(),
         };
         summary(&Report::from_run(
             RunContext::default(),
@@ -229,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reason_line_is_stderrs_last_then_notable_then_stdouts_last() {
+    fn the_reason_line_prefers_what_stderr_said_was_wrong() {
         use garita_core::adapter::output_tail;
         let pick = |stderr: &str, stdout: &str| {
             brief(&format!(
@@ -264,6 +298,24 @@ mod tests {
         assert_eq!(
             pick("why\nwhy last\n", "noise\n"),
             "exited with code 1: why last"
+        );
+        assert_eq!(
+            pick(
+                "--fail-on-drift set: failing (1 ADR(s) drifted)\nRealized-by hash mismatches still in grace: 1\n",
+                "{}\n"
+            ),
+            "exited with code 1: --fail-on-drift set: failing (1 ADR(s) drifted)"
+        );
+        assert_eq!(
+            pick(
+                "(node:1) DeprecationWarning: x\n",
+                "a.ts: error one\nb.ts: error two\nsummary line\n"
+            ),
+            "exited with code 1: a.ts: error one"
+        );
+        assert_eq!(
+            pick("", "  x eslint(no-debugger): no\n   :   ^^^^^^^^^\n"),
+            "exited with code 1: x eslint(no-debugger): no"
         );
         assert_eq!(
             brief("exited with code 1 and printed nothing\nx"),

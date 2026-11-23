@@ -195,6 +195,10 @@ Only `schema_version` is required. The defaults that matter most:
 - A check takes one of three forms: `run` with a `parser`, `native` (RFC-2), or `builtin`. A `run`
   with no `parser` uses `exit-code`. The one builtin is `clean-tree`.
 - A check with no `on` runs at every trigger.
+- A check reports every finding its tool gives unless it sets `min_severity` (`error`, `warning` or
+  `info`). Findings below it are left out of the verdict and counted in the check's `suppressed`,
+  so a repository with a backlog of warnings can keep them out of an agent's way without hiding
+  that they exist. Garita's own findings about a check are never suppressed.
 - A check runs from the repository root unless it sets `cwd`, a directory inside the repository.
   Files outside a check's `cwd` or its partition roots are left out of that check, and an
   `outside-root` finding at `info` says so.
@@ -204,9 +208,10 @@ Only `schema_version` is required. The defaults that matter most:
   the path of its key.
 
 `{files}` and `{affected}` are filled from the trigger's scope. A check with `{files}` and no matching
-files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose parser
-reports zero files examined when it was given files gets a `no-op` finding at `warning`. A check with
-no placeholder always runs, and what it examined is whatever its adapter reports (RFC-2).
+files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose tool
+examined nothing gets a `no-op` finding: a `warning` when the tool exited zero, an `error` when it
+did not. A check with no placeholder always runs, and what it examined is whatever its adapter
+reports (RFC-2).
 
 The `staged` scope reads files from the working tree, not the index. A staged file that also has
 unstaged changes is checked with those changes included, so garita reports it as a `partly-staged`

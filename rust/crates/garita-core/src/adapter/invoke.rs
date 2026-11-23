@@ -29,6 +29,11 @@ fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     None
 }
 
+/// oxlint's output format, given as `--format` or `-f`.
+fn format_of(args: &[String]) -> Option<&str> {
+    option_value(args, "--format").or_else(|| option_value(args, "-f"))
+}
+
 fn has_flag(argv: &[String], name: &str) -> bool {
     option_value(argv.get(1..).unwrap_or_default(), name).is_some()
 }
@@ -40,7 +45,7 @@ impl Adapter {
     pub fn complete_argv(self, argv: &mut Vec<String>, via_turbo: bool) -> Result<(), String> {
         if via_turbo {
             let outer = argv.get(1..).unwrap_or_default();
-            if self == Adapter::Oxlint && option_value(outer, "--format").is_some() {
+            if self == Adapter::Oxlint && format_of(outer).is_some() {
                 return Err(
                     "with `via: turbo`, `--format` before `--` goes to turbo, which rejects it; put it after `--` so it reaches oxlint"
                         .to_string(),
@@ -49,7 +54,7 @@ impl Adapter {
             return Ok(());
         }
         match self {
-            Adapter::Oxlint => match option_value(argv.get(1..).unwrap_or_default(), "--format") {
+            Adapter::Oxlint => match format_of(argv.get(1..).unwrap_or_default()) {
                 None => insert(argv, &["--format=json"]),
                 Some("json") => {}
                 Some(other) => {
@@ -116,6 +121,22 @@ mod tests {
             completed(Adapter::Oxlint, &["oxlint", "--", "-a.ts"], false),
             Ok(argv(&["oxlint", "--format=json", "--", "-a.ts"]))
         );
+    }
+
+    #[test]
+    fn oxlint_format_given_as_dash_f_is_read_too() {
+        for words in [
+            &["oxlint", "-f", "stylish", "."][..],
+            &["oxlint", "-f=unix", "."],
+        ] {
+            let err = completed(Adapter::Oxlint, words, false).unwrap_err();
+            assert!(err.contains("--format"), "{err}");
+        }
+        assert_eq!(
+            completed(Adapter::Oxlint, &["oxlint", "-f", "json", "."], false),
+            Ok(argv(&["oxlint", "-f", "json", "."]))
+        );
+        assert!(completed(Adapter::Oxlint, &["turbo", "lint", "-f", "json"], true).is_err());
     }
 
     #[test]

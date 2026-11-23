@@ -43,10 +43,15 @@ pub fn tail(stderr: &str, stdout: &str) -> String {
         ("stdout", last_lines(stdout)),
     ];
     let notable = notable_lines(stderr, stdout, &tails);
-    let blocks: Vec<(&str, Vec<&str>)> = std::iter::once(("notable", notable))
-        .chain(tails)
-        .filter(|(_, lines)| !lines.is_empty())
-        .collect();
+    let (from_stderr, from_stdout): (Vec<_>, Vec<_>) = notable.into_iter().partition(|(e, _)| *e);
+    let blocks: Vec<(&str, Vec<&str>)> = [
+        ("stderr notable", second(from_stderr)),
+        ("stdout notable", second(from_stdout)),
+    ]
+    .into_iter()
+    .chain(tails)
+    .filter(|(_, lines)| !lines.is_empty())
+    .collect();
     let labelled = blocks.len() > 1;
     let labels: usize = if labelled {
         blocks.iter().map(|(label, _)| label.len() + 3).sum()
@@ -82,20 +87,28 @@ fn last_lines(text: &str) -> Vec<&str> {
 
 /// Lines from both streams, in order, that name an error, skipping Node's deprecation noise and
 /// lines the tails already hold.
+fn second(pairs: Vec<(bool, &str)>) -> Vec<&str> {
+    pairs.into_iter().map(|(_, line)| line).collect()
+}
+
 fn notable_lines<'a>(
     stderr: &'a str,
     stdout: &'a str,
     tails: &[(&str, Vec<&str>)],
-) -> Vec<&'a str> {
-    let mut found: Vec<&str> = Vec::new();
-    for line in stderr.lines().chain(stdout.lines()) {
+) -> Vec<(bool, &'a str)> {
+    let mut found: Vec<(bool, &str)> = Vec::new();
+    let lines = stderr
+        .lines()
+        .map(|l| (true, l))
+        .chain(stdout.lines().map(|l| (false, l)));
+    for (from_stderr, line) in lines {
         if found.len() == NOTABLE_LINES {
             break;
         }
         let line = clip(line.trim_end());
         let held = tails.iter().any(|(_, t)| t.contains(&line));
-        if !held && !found.contains(&line) && is_notable(line) {
-            found.push(line);
+        if !held && !found.iter().any(|(_, l)| *l == line) && is_notable(line) {
+            found.push((from_stderr, line));
         }
     }
     found
@@ -179,6 +192,9 @@ fn keyword_at(all: &[(&str, &str)], i: usize) -> bool {
 /// Lines that never explain a failure: runtime warnings, banners, and source excerpts.
 pub fn is_noise(line: &str) -> bool {
     let trimmed = line.trim();
+    if !trimmed.is_empty() && !trimmed.chars().any(char::is_alphanumeric) {
+        return true;
+    }
     if trimmed.starts_with("(node:")
         || line.contains("DeprecationWarning")
         || trimmed.starts_with("(Use `node --trace-")
@@ -260,7 +276,9 @@ mod tests {
         stdout.push_str(&numbered("ok", 40));
         let got = tail("", &stdout);
         assert!(
-            got.starts_with("notable:\n0004-x.md: invalid status \"Acceptedd\"\nstdout:\nok 31\n"),
+            got.starts_with(
+                "stdout notable:\n0004-x.md: invalid status \"Acceptedd\"\nstdout:\nok 31\n"
+            ),
             "{got}"
         );
         assert!(
@@ -275,7 +293,7 @@ mod tests {
         let got = tail(&stderr, &numbered("x", 30));
         assert!(
             got.starts_with(
-                "notable:\nError 1\nError 2\nError 3\nError 4\nError 5\nstderr:\nError 11\n"
+                "stderr notable:\nError 1\nError 2\nError 3\nError 4\nError 5\nstderr:\nError 11\n"
             ),
             "{got}"
         );
@@ -341,7 +359,15 @@ mod tests {
 
     #[test]
     fn noise_covers_banners_and_excerpts_only() {
-        for line in ["turbo 2.5.6", "pnpm v9.1.0", "83 | code", "(node:1) x"] {
+        for line in [
+            "turbo 2.5.6",
+            "pnpm v9.1.0",
+            "83 | code",
+            "(node:1) x",
+            "   :   ^^^^^^^^^",
+            "  ----  ",
+            "─┬─",
+        ] {
             assert!(is_noise(line), "{line}");
         }
         for line in ["turbo failed", "step 2 of 3", "a b c 1.0", "FATAL: x"] {

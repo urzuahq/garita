@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use garita_core::ObjectId;
+use garita_core::argv::Placeholder;
 use garita_core::config::{Check, CheckForm, Config, OnExceed, satisfies};
 use garita_core::receipt::file_name;
 use garita_core::report::{CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger};
@@ -266,6 +268,7 @@ impl<'a> Session<'a> {
             tree: Some(self.tree.as_str().to_string()),
             scope: scope.map(Resolved::report_scope),
             receipt: receipt_path,
+            without_files: without_files(&self.loaded.config),
         };
         let entries = results.iter().map(|r| r.entry.clone()).collect();
         let mut report = Report::from_run(context, entries, findings, error);
@@ -325,6 +328,19 @@ impl<'a> Session<'a> {
             finding(GARITA, severity, "budget", message)
         })
     }
+}
+
+/// The `run` checks whose command has no `{files}`.
+fn without_files(config: &Config) -> BTreeSet<String> {
+    config
+        .checks
+        .iter()
+        .filter(|check| match &check.form {
+            CheckForm::Run { command, .. } => !command.placeholders().contains(&Placeholder::Files),
+            _ => false,
+        })
+        .map(|check| check.name.clone())
+        .collect()
 }
 
 /// Why the config's `requires` rules out this garita, when it does.

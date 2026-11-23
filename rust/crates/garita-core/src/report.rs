@@ -1,6 +1,6 @@
 //! The verdict garita prints (RFC-1 §5).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ impl Trigger {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
@@ -183,6 +183,9 @@ pub struct CheckEntry {
     pub duration_ms: u64,
     pub examined: Examined,
     pub rerun: Option<String>,
+    /// Tool findings below the check's `min_severity`, counted by severity.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub suppressed: BTreeMap<Severity, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +203,8 @@ pub struct RunContext {
     pub tree: Option<String>,
     pub scope: Option<Scope>,
     pub receipt: Option<String>,
+    /// Checks whose command takes no `{files}`, so `--files` cannot narrow their re-run.
+    pub without_files: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,7 +246,13 @@ impl Report {
             (RunStatus::NotRun, None) => Some(not_run_error(&checks)),
             (_, error) => error,
         };
-        let next = next_action(context.trigger, status, &checks, &findings);
+        let next = next_action_for(
+            context.trigger,
+            status,
+            &checks,
+            &findings,
+            &context.without_files,
+        );
         Self {
             schema_version: SCHEMA_VERSION,
             status,
@@ -318,6 +329,17 @@ pub fn next_action(
     checks: &[CheckEntry],
     findings: &[Finding],
 ) -> NextAction {
+    next_action_for(trigger, status, checks, findings, &BTreeSet::new())
+}
+
+/// [`next_action`] knowing which checks take no `{files}`.
+pub fn next_action_for(
+    trigger: Option<Trigger>,
+    status: RunStatus,
+    checks: &[CheckEntry],
+    findings: &[Finding],
+    without_files: &BTreeSet<String>,
+) -> NextAction {
     match status {
         RunStatus::Pass | RunStatus::Warn => NextAction {
             action: None,
@@ -327,7 +349,7 @@ pub fn next_action(
             action: Some(DOCTOR.to_string()),
             reason: Some(not_run_reason(checks)),
         },
-        RunStatus::Fail => match failing_rerun(trigger, checks, findings) {
+        RunStatus::Fail => match failing_rerun(trigger, checks, findings, without_files) {
             Some(action) => NextAction {
                 action: Some(action),
                 reason: Some(fail_reason(checks, findings)),
@@ -402,6 +424,7 @@ fn failing_rerun(
     trigger: Option<Trigger>,
     checks: &[CheckEntry],
     findings: &[Finding],
+    without_files: &BTreeSet<String>,
 ) -> Option<String> {
     let has_error = |name: &str| {
         findings
@@ -422,6 +445,9 @@ fn failing_rerun(
         return Some(rerun_checks(trigger, &[], &[]));
     }
     let first = *names.first()?;
+    if names.iter().any(|n| without_files.contains(*n)) {
+        return Some(rerun_checks(trigger, &names, &[]));
+    }
     if names.len() == 1 {
         return Some(rerun_command(trigger, first, &error_files(first, findings)));
     }
@@ -534,6 +560,7 @@ mod tests {
             duration_ms: 1,
             examined: [("files".to_string(), files)].into(),
             rerun: None,
+            suppressed: BTreeMap::new(),
         }
     }
 
@@ -567,6 +594,7 @@ mod tests {
             tree: expected.tree.clone(),
             scope: expected.scope.clone(),
             receipt: expected.receipt.clone(),
+            without_files: BTreeSet::new(),
         };
         let built = Report::from_run(
             context,
@@ -723,6 +751,31 @@ mod tests {
         assert_eq!(
             next.action.as_deref(),
             Some("garita run --trigger push lint types")
+        );
+    }
+
+    #[test]
+    fn files_are_left_out_when_a_failing_check_takes_none() {
+        let checks = [
+            check("lint", CheckStatus::Fail, 1),
+            check("lint-all", CheckStatus::Fail, 1),
+        ];
+        let f = [
+            finding("lint", Severity::Error, Some("a.ts")),
+            finding("lint-all", Severity::Error, Some("b.ts")),
+        ];
+        let none = BTreeSet::from(["lint-all".to_string()]);
+        let next = next_action_for(Some(Trigger::Push), RunStatus::Fail, &checks, &f, &none);
+        assert_eq!(
+            next.action.as_deref(),
+            Some("garita run --trigger push lint lint-all")
+        );
+        let next = next_action_for(None, RunStatus::Fail, &checks[1..], &f[1..], &none);
+        assert_eq!(next.action.as_deref(), Some("garita run lint-all"));
+        let next = next_action_for(None, RunStatus::Fail, &checks, &f, &BTreeSet::new());
+        assert_eq!(
+            next.action.as_deref(),
+            Some("garita run lint lint-all --files a.ts b.ts")
         );
     }
 

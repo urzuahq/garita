@@ -50,7 +50,7 @@ fn a_failing_lint_yields_findings_with_file_line_rule_and_message() {
 
 #[test]
 fn a_check_that_ran_on_nothing_is_a_no_op_warning_never_a_pass() {
-    let repo = lint_repo("oxlint@1.94.0/no-files-matched-json", "");
+    let repo = lint_repo("oxlint@1.94.0/no-files-matched-allowed-json", "");
     let out = repo.run();
     let r = &out.report;
     assert_eq!(r.status, RunStatus::Warn);
@@ -469,4 +469,133 @@ fn every_batch_runs_when_the_first_batch_fails() {
         check(&out.report, "lint").examined.get("files"),
         Some(&total)
     );
+}
+
+fn whole_tree_lint(case: &str) -> Repo {
+    let repo = Repo::new();
+    let tool = oxlint(&repo, case);
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} packages/app/srcc\n    parser: oxlint\n"
+    ));
+    repo
+}
+
+#[test]
+fn examining_nothing_with_a_non_zero_exit_is_an_error_without_files_too() {
+    for case in [
+        "no-files-matched-default",
+        "nonexistent-path-default",
+        "nonexistent-path-json",
+    ] {
+        let out = whole_tree_lint(&format!("oxlint@1.94.0/{case}")).run();
+        assert_eq!(out.exit_code(), 1, "{case}: {:#?}", out.report);
+        let f = finding(&out.report, "no-op");
+        assert_eq!(f.severity, Severity::Error, "{case}");
+        assert!(
+            f.message
+                .contains("exited with code 1 and examined nothing")
+                && f.message.contains("No files found to lint"),
+            "{case}: {}",
+            f.message
+        );
+    }
+}
+
+#[test]
+fn examining_nothing_with_exit_0_is_a_no_op_warning_without_files_too() {
+    for case in [
+        "no-files-matched-allowed-default",
+        "no-files-matched-allowed-json",
+    ] {
+        let out = whole_tree_lint(&format!("oxlint@1.94.0/{case}")).run();
+        assert_eq!(out.report.status, RunStatus::Warn, "{case}");
+        assert_eq!(out.exit_code(), 0);
+        let f = finding(&out.report, "no-op");
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f.message.ends_with("examined nothing"), "{}", f.message);
+    }
+}
+
+#[test]
+fn a_check_that_takes_no_files_is_rerun_without_files() {
+    let out = whole_tree_lint("oxlint@1.94.0/one-error-json").run();
+    let f = finding(&out.report, "oxlint/eslint/no-debugger");
+    assert_eq!(f.file.as_deref(), Some(LINT_FILE));
+    assert_eq!(out.report.next_action.as_deref(), Some("garita run lint"));
+    assert_eq!(
+        check(&out.report, "lint").rerun.as_deref(),
+        Some("garita run lint")
+    );
+}
+
+/// Two warnings and one error from oxlint, under `min_severity` when given.
+fn floor_repo(floor: Option<&str>, with_error: bool) -> Repo {
+    let repo = Repo::new();
+    let diag = |sev: &str, rule: &str| {
+        format!(
+            "{{\"message\":\"m\",\"code\":\"eslint({rule})\",\"severity\":\"{sev}\",\
+             \"filename\":\"a.ts\",\"labels\":[{{\"span\":{{\"line\":1,\"column\":1}}}}]}}"
+        )
+    };
+    let mut diags = vec![diag("warning", "eqeqeq"), diag("warning", "no-var")];
+    if with_error {
+        diags.push(diag("error", "no-debugger"));
+    }
+    let report = format!(
+        "{{\"diagnostics\":[{}],\"number_of_files\":1}}",
+        diags.join(",")
+    );
+    let tool = repo.tool(
+        "oxlint",
+        &format!("printf '%s' '{report}'\nexit {}", u8::from(with_error)),
+    );
+    let floor = floor.map_or(String::new(), |f| format!("    min_severity: {f}\n"));
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool}\n    parser: oxlint\n{floor}"
+    ));
+    repo
+}
+
+#[test]
+fn min_severity_drops_and_counts_tool_findings_below_it() {
+    let out = floor_repo(None, true).run();
+    assert_eq!(rules(&out.report, "lint").len(), 3);
+    assert!(check(&out.report, "lint").suppressed.is_empty());
+    let json = garita_io::engine::to_json(&out.report);
+    assert!(!json.contains("suppressed"), "{json}");
+
+    let out = floor_repo(Some("info"), true).run();
+    assert_eq!(rules(&out.report, "lint").len(), 3);
+
+    let out = floor_repo(Some("error"), true).run();
+    assert_eq!(rules(&out.report, "lint"), ["oxlint/eslint/no-debugger"]);
+    let entry = check(&out.report, "lint");
+    assert_eq!(entry.status, CheckStatus::Fail);
+    assert_eq!(entry.suppressed.get(&Severity::Warning), Some(&2));
+    let json = garita_io::engine::to_json(&out.report);
+    assert!(json.contains("\"suppressed\":{\"warning\":2}"), "{json}");
+    let text = garita_io::engine::summary(&out.report);
+    assert!(text.contains("[2 warnings suppressed]"), "{text}");
+
+    let out = floor_repo(Some("warning"), false).run();
+    assert_eq!(rules(&out.report, "lint").len(), 2);
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Warn);
+
+    let out = floor_repo(Some("error"), false).run();
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Pass);
+    assert_eq!(out.report.status, RunStatus::Pass);
+    assert!(out.report.findings.is_empty());
+}
+
+#[test]
+fn min_severity_never_hides_garitas_own_findings() {
+    let repo = Repo::new();
+    let tool = repo.tool("t", "sleep 0.3");
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  t:\n    run: {tool}\n    min_severity: error\n    \
+         budget: {{ duration: 50ms }}\n"
+    ));
+    let out = repo.run();
+    let f = finding(&out.report, "budget");
+    assert_eq!(f.severity, Severity::Warning);
 }

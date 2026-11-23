@@ -10,7 +10,7 @@ use super::{
     TriggerConfig, VersionReq, Worktree, parse_duration,
 };
 use crate::argv::{Arg, Command, Placeholder};
-use crate::report::{CheckKind, ScopeKind, Trigger};
+use crate::report::{CheckKind, ScopeKind, Severity, Trigger};
 
 const TOP_KEYS: &[&str] = &[
     "schema_version",
@@ -39,10 +39,16 @@ const CHECK_KEYS: &[&str] = &[
     "on_exceed",
     "on",
     "advisory",
+    "min_severity",
 ];
 const BUILTIN_FORBIDS: &[&str] = &["parser", "globs", "partition", "via", "exclude", "cwd"];
 pub(super) const RESERVED_CHECK: &str = "garita";
 pub(super) const VIA_TURBO: &str = "turbo";
+const MIN_SEVERITY: &[(&str, Severity)] = &[
+    ("error", Severity::Error),
+    ("warning", Severity::Warning),
+    ("info", Severity::Info),
+];
 const ON_EXCEED: &[(&str, OnExceed)] = &[
     ("warn", OnExceed::Warn),
     ("fail", OnExceed::Fail),
@@ -508,6 +514,10 @@ impl Walker {
             .get("advisory")
             .and_then(|v| self.boolean(v, &join(&path, "advisory")))
             .unwrap_or(false);
+        let min_severity = f
+            .get("min_severity")
+            .and_then(|v| self.choice(v, &join(&path, "min_severity"), MIN_SEVERITY))
+            .unwrap_or(Severity::Info);
         Some(Check {
             name: name.to_string(),
             form: form?,
@@ -521,6 +531,7 @@ impl Walker {
             on_exceed,
             on: on?,
             advisory,
+            min_severity,
         })
         .inspect(|check| self.check_invocation(check, &path))
     }

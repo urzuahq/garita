@@ -90,11 +90,14 @@ checks:
 - **What was examined.** A count per unit (`files`, `tests`, `packages`), taken from the tool's own
   output where it reports one. This is how a run over nothing is told apart from a pass.
 - **The kind of run.** One of: clean, findings, ran on nothing, or crashed. The adapter decides this
-  from the output and never from the exit code alone. A crash is a tool that was killed, timed out,
-  or exited zero with output the adapter could not read (RFC-1's `on_crash`). A tool that exited
-  non-zero with output the adapter could not read is not a crash: it is one finding at `error`,
-  `<tool>/unrecognized-output`, carrying the tail of the output. A new tool version that words
-  something differently then blocks and says so, and never passes as a warning.
+  from the output and never from the exit code alone. A crash is a tool that was killed or timed
+  out (RFC-1's `on_crash`). A tool that exited non-zero with output the adapter could not read is
+  not a crash: it is one finding at `error`, `<tool>/unrecognized-output`, carrying the lines of its
+  output that look like errors and the last lines of each stream. A new tool version that words
+  something differently then blocks and says so, and never passes as a warning. A run over nothing
+  is always a finding: a `no-op` warning when the tool exited zero, and an error when it did not.
+  The oxlint adapter treats output it cannot read from a tool that exited zero as clean, since it
+  reads plain text as well as JSON and a clean text run prints nothing it can recognise.
 
 What the first adapters read, each settled from a recorded run:
 

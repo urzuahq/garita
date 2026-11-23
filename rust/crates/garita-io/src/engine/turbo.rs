@@ -37,20 +37,20 @@ pub fn read(
 ) -> Result<Vec<TaskLog>, String> {
     let wanted = task_names(argv);
     let dir = cwd.join(RUNS);
+    let summaries = new_summaries(&dir, before);
     let mut parsed = None;
-    for path in new_summaries(&dir, before) {
-        let text = fs::read_to_string(&path).map_err(|e| {
+    for path in &summaries {
+        let text = fs::read_to_string(path).map_err(|e| {
             format!(
                 "could not read the turbo run summary {}: {e}",
                 path.display()
             )
         })?;
         let summary = parse_summary(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        let ours = wanted.is_empty()
-            || summary
-                .tasks
-                .iter()
-                .any(|t| wanted.contains(&t.task) || wanted.contains(&t.task_id));
+        let ours = summary
+            .tasks
+            .iter()
+            .any(|t| wanted.is_empty() || wanted.contains(&t.task) || wanted.contains(&t.task_id));
         if ours {
             parsed = Some(summary);
             break;
@@ -62,10 +62,11 @@ pub fn read(
         } else {
             format!(" for {}", wanted.join(", "))
         };
-        return Err(format!(
-            "turbo wrote no run summary{tasks} under {}",
-            dir.display()
-        ));
+        return Err(if summaries.is_empty() {
+            format!("turbo wrote no run summary{tasks} under {}", dir.display())
+        } else {
+            format!("turbo's run summary holds no task{tasks}, so this check ran nothing")
+        });
     };
     parsed
         .tasks

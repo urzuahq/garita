@@ -61,7 +61,7 @@ fn turbo_findings_come_from_each_tasks_log_rebased_from_its_package() {
     assert_eq!(check(&out.report, "types").status, CheckStatus::Fail);
     assert_eq!(
         out.report.next_action.as_deref(),
-        Some("garita run --trigger push types --files packages/app/src/type-error.ts")
+        Some("garita run --trigger push types")
     );
     let log = repo.log("turbo");
     assert_eq!(log.len(), 1);
@@ -436,4 +436,77 @@ fn a_failing_task_without_a_log_file_shows_turbos_own_output() {
     );
     assert!(errors[0].message.contains("FATAL: schema 7 is missing"));
     assert_eq!(out.exit_code(), 1);
+}
+
+#[test]
+fn a_task_that_examined_nothing_and_failed_is_an_error_naming_it() {
+    let repo = Repo::new();
+    let body = writes_tasks(
+        "lint",
+        "N",
+        &[(
+            "app",
+            1,
+            "No files found to lint. Please check your paths and ignore patterns.",
+        )],
+    );
+    let tool = repo.tool("turbo", &format!("{body}exit 1"));
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} run lint\n    parser: oxlint\n    via: turbo\n"
+    ));
+    let out = repo.run_at(Trigger::Ci);
+    let errors = errors(&out.report);
+    assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
+    assert_eq!(errors[0].rule, "no-op");
+    assert!(
+        errors[0]
+            .message
+            .starts_with("app#lint: lint exited with code 1 and examined nothing in packages/app:")
+            && errors[0].message.contains("No files found to lint"),
+        "{}",
+        errors[0].message
+    );
+    assert_eq!(out.exit_code(), 1);
+}
+
+fn turbo_writing(summary: &str, exit: i32) -> Repo {
+    let repo = Repo::new();
+    let tool = repo.tool(
+        "turbo",
+        &format!("mkdir -p .turbo/runs\nprintf '%s' '{summary}' > .turbo/runs/S.json\nexit {exit}"),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  check:\n    run: {tool} run check\n    via: turbo\n"
+    ));
+    repo
+}
+
+#[test]
+fn a_summary_without_this_checks_tasks_says_so_and_fails() {
+    let other = "{\"tasks\":[{\"taskId\":\"a#build\",\"task\":\"build\",\"package\":\"a\",\
+                 \"directory\":\"packages/a\",\"cache\":{\"status\":\"MISS\"},\
+                 \"execution\":{\"exitCode\":0}}]}";
+    for summary in ["{\"tasks\":[]}", other] {
+        let out = turbo_writing(summary, 0).run_at(Trigger::Ci);
+        let f = finding(&out.report, "turbo/unrecognized-output");
+        assert!(
+            f.message
+                .starts_with("turbo's run summary holds no task for check"),
+            "{}",
+            f.message
+        );
+        assert_eq!(out.exit_code(), 1);
+    }
+}
+
+#[test]
+fn a_task_with_no_execution_record_is_a_no_op_warning() {
+    let summary = "{\"tasks\":[{\"taskId\":\"a#check\",\"task\":\"check\",\"package\":\"a\",\
+                   \"directory\":\"packages/a\",\"logFile\":null,\"cache\":{\"status\":\"MISS\"}}]}";
+    let out = turbo_writing(summary, 0).run_at(Trigger::Ci);
+    let f = finding(&out.report, "no-op");
+    assert_eq!(f.severity, Severity::Warning);
+    assert_eq!(f.message, "a#check has no execution record");
+    assert_eq!(out.exit_code(), 0);
+    assert_eq!(check(&out.report, "check").status, CheckStatus::Warn);
 }
