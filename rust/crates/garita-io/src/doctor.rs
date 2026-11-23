@@ -97,10 +97,11 @@ fn not_run(error: String) -> Verdict {
 fn hook_findings(root: &Path) -> Result<Vec<Finding>, String> {
     let dir = git::hooks_dir(root).map_err(|e| e.to_string())?;
     let mut findings = Vec::new();
-    for (name, _) in HOOKS {
+    for (name, trigger) in HOOKS {
         let path = dir.join(name);
         let shown = path.display();
-        let file = hooks::examine(&path).map_err(|e| format!("could not read {shown}: {e}"))?;
+        let file = hooks::examine(&path, name, trigger)
+            .map_err(|e| format!("could not read {shown}: {e}"))?;
         let (wants_exec, found) = match file.kind {
             Kind::Missing => (
                 false,
@@ -121,12 +122,25 @@ fn hook_findings(root: &Path) -> Result<Vec<Finding>, String> {
                 )),
             ),
             Kind::Garita(_) => (true, None),
+            Kind::Modified { calls_garita } => (
+                calls_garita,
+                Some((
+                    Severity::Warning,
+                    "doctor/hook-modified",
+                    format!(
+                        "{shown} was written by garita and has been edited; `{INSTALL} --replace` restores it"
+                    ),
+                )),
+            ),
             Kind::Foreign { calls_garita: true } => (
                 true,
                 Some((
                     Severity::Info,
                     "doctor/hook-calls-garita",
-                    format!("{shown} is not garita's hook, but it runs `garita run`"),
+                    format!(
+                        "{shown} is not garita's hook, but it runs `garita run --trigger {}`",
+                        trigger.as_str()
+                    ),
                 )),
             ),
             Kind::Foreign {
@@ -155,27 +169,40 @@ fn hook_findings(root: &Path) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+/// A check that cannot run blocks the hooks' triggers; one that runs only in CI may have its
+/// tools only there.
+fn blocking_severity(check: &Check) -> Severity {
+    let at_hooks = HOOKS.iter().any(|(_, t)| check.on.contains(t));
+    if at_hooks {
+        Severity::Error
+    } else {
+        Severity::Warning
+    }
+}
+
 fn check_findings(root: &Path, check: &Check, path: Option<&OsStr>) -> Vec<Finding> {
     let name = &check.name;
+    let severity = blocking_severity(check);
     let mut findings = Vec::new();
+    let mut push = |rule: &str, message: String| {
+        findings.push(finding(severity, rule, format!("checks.{name}: {message}")));
+    };
     let mut base = root.to_path_buf();
     if let Some(cwd) = &check.cwd {
         base = root.join(cwd);
         if !base.is_dir() {
-            let message =
-                format!("checks.{name}: the directory `{cwd}` given as `cwd` does not exist");
-            findings.push(finding(Severity::Error, "doctor/cwd-missing", message));
+            push(
+                "doctor/cwd-missing",
+                format!("the directory `{cwd}` given as `cwd` does not exist"),
+            );
         }
     }
     for pattern in check.partition.iter().flat_map(|p| &p.roots) {
         if !partition_root_exists(root, pattern) {
-            let message =
-                format!("checks.{name}: no directory matches the partition root `{pattern}`");
-            findings.push(finding(
-                Severity::Error,
+            push(
                 "doctor/partition-root-missing",
-                message,
-            ));
+                format!("no directory matches the partition root `{pattern}`"),
+            );
         }
     }
     match &check.form {
@@ -183,28 +210,26 @@ fn check_findings(root: &Path, check: &Check, path: Option<&OsStr>) -> Vec<Findi
             command, parser, ..
         } => {
             if let Err(e) = Adapter::from_parser_name(parser) {
-                let message = format!("checks.{name}: {e}");
-                findings.push(finding(Severity::Error, "doctor/unknown-parser", message));
+                push("doctor/unknown-parser", e.to_string());
             }
-            if let Some(Arg::Literal(program)) = command.args().first() {
-                if base.is_dir() && find_program(program, &base, path).is_none() {
-                    let message = format!(
-                        "checks.{name}: the program `{program}` cannot be found or is not executable"
-                    );
-                    findings.push(finding(Severity::Error, "doctor/tool-missing", message));
+            if let (Some(Arg::Literal(program)), true) = (command.args().first(), base.is_dir()) {
+                match lookup(program, &base, path) {
+                    Lookup::Found(_) => {}
+                    Lookup::NotExecutable(at) => push(
+                        "doctor/tool-not-executable",
+                        format!("the program `{program}` at {} is not executable", at.display()),
+                    ),
+                    Lookup::Missing => push(
+                        "doctor/tool-missing",
+                        format!("the program `{program}` cannot be found"),
+                    ),
                 }
             }
         }
-        CheckForm::Native { .. } | CheckForm::Builtin { .. } => {
-            let message = format!(
-                "checks.{name}: this version of garita does not run a `native` or `builtin` check, so a run that selects it is not-run"
-            );
-            findings.push(finding(
-                Severity::Warning,
-                "doctor/form-unsupported",
-                message,
-            ));
-        }
+        CheckForm::Native { .. } | CheckForm::Builtin { .. } => push(
+            "doctor/form-unsupported",
+            "this version of garita does not run a `native` or `builtin` check, so a run that selects it is not-run".to_string(),
+        ),
     }
     findings
 }
@@ -224,21 +249,41 @@ fn partition_root_exists(root: &Path, pattern: &str) -> bool {
     })
 }
 
-/// Resolves a program as `execvp` would: a name with a `/` against `base`, else along `PATH`.
-pub fn find_program(program: &str, base: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
-    if program.contains('/') {
-        let candidate = base.join(program);
-        return hooks::is_executable(&candidate).then_some(candidate);
-    }
-    std::env::split_paths(path?)
-        .map(|dir| {
-            if dir.as_os_str().is_empty() {
-                base.join(program)
-            } else {
-                base.join(dir).join(program)
-            }
+/// Where a program resolves, as `execvp` would look for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lookup {
+    Found(PathBuf),
+    /// A file of that name exists but cannot be executed.
+    NotExecutable(PathBuf),
+    Missing,
+}
+
+/// Resolves a name with a `/` against `base`, else along `PATH`.
+pub fn lookup(program: &str, base: &Path, path: Option<&OsStr>) -> Lookup {
+    let candidates: Vec<PathBuf> = if program.contains('/') {
+        vec![base.join(program)]
+    } else {
+        path.map(|p| {
+            std::env::split_paths(p)
+                .map(|dir| base.join(dir).join(program))
+                .collect()
         })
-        .find(|candidate| hooks::is_executable(candidate))
+        .unwrap_or_default()
+    };
+    if let Some(found) = candidates.iter().find(|c| hooks::is_executable(c)) {
+        return Lookup::Found(found.clone());
+    }
+    candidates
+        .into_iter()
+        .find(|c| c.is_file())
+        .map_or(Lookup::Missing, Lookup::NotExecutable)
+}
+
+pub fn find_program(program: &str, base: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
+    match lookup(program, base, path) {
+        Lookup::Found(p) => Some(p),
+        _ => None,
+    }
 }
 
 fn repository_findings(root: &Path, config: &Config) -> Result<Vec<Finding>, String> {

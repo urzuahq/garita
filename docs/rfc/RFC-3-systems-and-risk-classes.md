@@ -57,6 +57,11 @@ Garita holds four things and nothing else:
 Every answer about the change comes from a tool. Garita's own decision is always deterministic: given
 the same tool results, it returns the same verdict.
 
+"Control plane" names garita and nothing else. The records, with urzua as their engine, are the
+**governance plane**: people decide there, in records. Garita enforces what the records and the risk
+classes say on every change, and returns one verdict. Systems 0, 1 and 2 are the checks the control
+plane runs. Risk is a separate axis: it says how far up the systems a change must go.
+
 ### 2. Systems
 
 | System | Compute | Tools | Deterministic |
@@ -210,6 +215,8 @@ Decided by the maintainer on 2026-11-22:
 
 - **Risk is garita's.**
 - **Garita is the control plane**, not a System 0 tool. urzua, linters and build tools are System 0.
+- **The records are the governance plane**, with urzua as their engine (the maintainer, 2026-11-23).
+  People decide there; garita enforces it. "Control plane" is used for garita only.
 - **The systems:** 0 asks whether the test exists and is linked properly; 1 asks whether it tests the
   right thing, answered by tools built on decision models; 2 asks what the test does, answered by LLM
   inference.

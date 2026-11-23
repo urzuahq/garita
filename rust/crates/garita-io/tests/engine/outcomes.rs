@@ -436,3 +436,37 @@ fn many_files_are_split_into_batches_and_one_failing_batch_still_fails_the_run()
         Some(&(total as u64))
     );
 }
+
+#[test]
+fn every_batch_runs_when_the_first_batch_fails() {
+    let repo = Repo::new();
+    let counts = repo.log_path("counts");
+    let first = repo.base().join("first-done");
+    let tool = repo.tool(
+        "lint",
+        &format!(
+            "echo $# >> '{}'\nif [ ! -e '{f}' ]; then : > '{f}'; echo 'bad first batch' >&2; exit 1; fi\nexit 0",
+            counts.display(),
+            f = first.display()
+        ),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n"
+    ));
+    let dir = "d".repeat(180);
+    let total: u64 = 3000;
+    for i in 0..total {
+        repo.write(&format!("{dir}/f{i:05}.ts"), "");
+    }
+    repo.stage(&[&dir]);
+    let out = repo.run();
+    let batches = repo.log("counts");
+    assert!(batches.len() >= 3, "{batches:?}");
+    let given: u64 = batches.iter().map(|n| n.parse::<u64>().unwrap()).sum();
+    assert_eq!(given, total);
+    assert_eq!(out.exit_code(), 1);
+    assert_eq!(
+        check(&out.report, "lint").examined.get("files"),
+        Some(&total)
+    );
+}

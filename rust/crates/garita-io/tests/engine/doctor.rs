@@ -148,7 +148,7 @@ fn a_foreign_hook_is_a_warning_unless_it_runs_garita() {
     assert!(report.next_action.is_none());
     fs::write(
         hook(&repo, "pre-commit"),
-        "#!/bin/sh\nnpm test && garita run --trigger commit\n",
+        "#!/bin/sh\nnpm test\ngarita run --trigger commit\n",
     )
     .unwrap();
     let report = doctor(&repo);
@@ -161,19 +161,69 @@ fn a_foreign_hook_is_a_warning_unless_it_runs_garita() {
 }
 
 #[test]
-fn an_older_hook_format_is_outdated() {
+fn garitas_hook_with_a_line_appended_is_modified_not_garitas() {
     let repo = healthy();
-    fs::write(
-        hook(&repo, "pre-commit"),
-        "#!/bin/sh\n# garita hook format 0: old\nexec garita run\n",
-    )
-    .unwrap();
+    let path = hook(&repo, "pre-commit");
+    let edited = format!(
+        "{}echo extra\n",
+        hooks::script("pre-commit", Trigger::Commit)
+    );
+    fs::write(&path, edited).unwrap();
     let report = doctor(&repo);
     assert_eq!(
-        finding(&report, "doctor/hook-outdated").severity,
+        finding(&report, "doctor/hook-modified").severity,
         Severity::Warning
     );
+    assert!(!has(&report, "doctor/hook-foreign"));
+    assert!(!has(&doctor(&healthy()), "doctor/hook-modified"));
+}
+
+#[test]
+fn a_current_hook_is_not_outdated() {
     assert!(!has(&doctor(&healthy()), "doctor/hook-outdated"));
+}
+
+#[test]
+fn only_a_garita_run_command_at_this_hooks_trigger_counts_as_calling_garita() {
+    let repo = healthy();
+    let cases = [
+        (
+            "pre-commit",
+            "npm test\nexec garita run --trigger commit\n",
+            true,
+        ),
+        ("pre-commit", "garita run\n", true),
+        (
+            "pre-commit",
+            "  garita run --trigger=commit --files a\n",
+            true,
+        ),
+        (
+            "pre-commit",
+            "echo \"garita run is disabled\"; exit 0\n",
+            false,
+        ),
+        ("pre-commit", "garita run --trigger push\n", false),
+        ("pre-commit", "garita runner\n", false),
+        ("pre-commit", "# garita run --trigger commit\n", false),
+        ("pre-push", "garita run\n", false),
+        ("pre-push", "exec garita run --trigger push \"$@\"\n", true),
+    ];
+    for (name, body, calls) in cases {
+        fs::write(hook(&repo, name), format!("#!/bin/sh\n{body}")).unwrap();
+        let report = doctor(&repo);
+        assert_eq!(
+            has(&report, "doctor/hook-calls-garita"),
+            calls,
+            "{name}: {body}"
+        );
+        assert_eq!(
+            has(&report, "doctor/hook-foreign"),
+            !calls,
+            "{name}: {body}"
+        );
+        hooks::install(&repo.root(), true);
+    }
 }
 
 #[test]
@@ -223,7 +273,12 @@ fn a_tool_that_cannot_be_found_is_an_error_naming_the_check_and_program() {
     repo.config(
         "schema_version: 1\nchecks:\n  lint:\n    run: lint {files}\n    on: [commit, push]\n",
     );
-    assert!(has(&doctor(&repo), "doctor/tool-missing"));
+    let report = doctor(&repo);
+    assert!(!has(&report, "doctor/tool-missing"));
+    assert_eq!(
+        finding(&report, "doctor/tool-not-executable").severity,
+        Severity::Error
+    );
 }
 
 #[test]
@@ -392,4 +447,56 @@ fn doctor_leaves_the_repository_byte_identical() {
     doctor(&repo);
     assert_eq!(snapshot(&repo.root()), before);
     assert!(repo.receipts().is_empty());
+}
+
+#[test]
+fn whenever_run_at_commit_is_not_run_doctor_does_not_pass() {
+    let defects = [
+        "    native: urzua\n",
+        "    builtin: clean-tree\n",
+        "    run: BIN/nosuch-lint {files}\n",
+        "    run: BIN/unexecutable {files}\n",
+        "    run: BIN/lint {files}\n    parser: nope\n",
+        "    run: BIN/lint {files}\n    cwd: gone\n",
+        "    run: BIN/lint {files}\n    partition: { by: dir, roots: ['packages/*'] }\n",
+        "    run: '{files}'\n",
+    ];
+    let mut not_run = 0;
+    for body in defects {
+        let repo = healthy();
+        let bin = repo.base().join("bin/unexecutable");
+        fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+        let body = body.replace("BIN", &repo.base().join("bin").to_string_lossy());
+        repo.config(&format!(
+            "schema_version: 1\nchecks:\n  c:\n{body}    on: [commit, push]\n"
+        ));
+        repo.write("a.ts", "x\n");
+        repo.stage(&["a.ts"]);
+        let run = repo.run_at(Trigger::Commit).report;
+        let report = doctor(&repo);
+        if run.status == RunStatus::NotRun {
+            not_run += 1;
+            assert_ne!(report.exit_code(), 0, "{body}: {report:#?}");
+        }
+        assert_ne!(report.exit_code(), 0, "{body}: doctor passed: {report:#?}");
+    }
+    assert!(not_run >= 6, "{not_run}");
+}
+
+#[test]
+fn a_defect_in_a_check_that_runs_only_in_ci_is_a_warning() {
+    let repo = healthy();
+    repo.config(
+        "schema_version: 1\nchecks:\n  lint:\n    run: lint {files}\n    on: [commit, push]\n  records:\n    native: urzua\n    on: [ci]\n  ci-only:\n    run: nosuch-lint {files}\n    on: [ci, merge]\n",
+    );
+    let report = doctor(&repo);
+    assert_eq!(report.exit_code(), 0, "{report:#?}");
+    assert_eq!(
+        finding(&report, "doctor/form-unsupported").severity,
+        Severity::Warning
+    );
+    assert_eq!(
+        finding(&report, "doctor/tool-missing").severity,
+        Severity::Warning
+    );
 }

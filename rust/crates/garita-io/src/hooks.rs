@@ -18,13 +18,24 @@ const MARKER: &str = "# garita hook format ";
 pub const HOOKS: [(&str, Trigger); 2] =
     [("pre-commit", Trigger::Commit), ("pre-push", Trigger::Push)];
 
-/// The script for one hook. It fails closed when `garita` is missing and leaves the verdict's
-/// exit code to `exec`.
+/// Writes the exact script of one hook format, for a hook name and its trigger.
+pub type Script = fn(&str, Trigger) -> String;
+
+/// Every hook format garita has written, oldest first; a file is garita's only when it is
+/// byte for byte one of these.
+pub const FORMATS: &[(u32, Script)] = &[(1, script_v1)];
+
+/// The script for one hook in the current format.
 pub fn script(name: &str, trigger: Trigger) -> String {
+    script_v1(name, trigger)
+}
+
+/// Fails closed when `garita` is missing and leaves the verdict's exit code to `exec`.
+fn script_v1(name: &str, trigger: Trigger) -> String {
     let t = trigger.as_str();
     format!(
         "#!/bin/sh\n\
-         {MARKER}{HOOK_FORMAT}: written by `garita hooks install`, which rewrites this file\n\
+         {MARKER}1: written by `garita hooks install`, which rewrites this file\n\
          if ! command -v garita >/dev/null 2>&1; then\n  \
          echo \"garita: the {name} hook needs garita, which is not on PATH; this {t} is blocked\" >&2\n  \
          exit 2\n\
@@ -37,12 +48,22 @@ pub fn script(name: &str, trigger: Trigger) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Missing,
-    /// Written by garita, in this hook format.
+    /// Exactly the script garita writes, in this hook format.
     Garita(u32),
-    /// Someone else's; `calls_garita` when a line of it runs `garita run`.
+    /// Carries garita's marker but has been edited; someone else's now.
+    Modified {
+        calls_garita: bool,
+    },
+    /// Someone else's; `calls_garita` when it runs `garita run` at this hook's trigger.
     Foreign {
         calls_garita: bool,
     },
+}
+
+impl Kind {
+    pub fn is_garita(self) -> bool {
+        matches!(self, Kind::Garita(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,12 +75,24 @@ pub struct HookFile {
     pub text: Option<String>,
 }
 
-pub fn examine(path: &Path) -> io::Result<HookFile> {
-    let symlink = match fs::symlink_metadata(path) {
-        Ok(meta) => meta.file_type().is_symlink(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+pub fn examine(path: &Path, name: &str, trigger: Trigger) -> io::Result<HookFile> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => Some(meta),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
+    let symlink = meta.as_ref().is_some_and(|m| m.file_type().is_symlink());
+    if meta.as_ref().is_some_and(fs::Metadata::is_dir) {
+        return Ok(HookFile {
+            path: path.to_path_buf(),
+            kind: Kind::Foreign {
+                calls_garita: false,
+            },
+            symlink,
+            executable: false,
+            text: None,
+        });
+    }
     let (text, executable) = match fs::read(path) {
         Ok(bytes) => (
             Some(String::from_utf8_lossy(&bytes).into_owned()),
@@ -68,15 +101,9 @@ pub fn examine(path: &Path) -> io::Result<HookFile> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => (None, false),
         Err(e) => return Err(e),
     };
-    let kind = match &text {
-        None => Kind::Missing,
-        Some(text) => match format_of(text) {
-            Some(format) => Kind::Garita(format),
-            None => Kind::Foreign {
-                calls_garita: calls_garita(text),
-            },
-        },
-    };
+    let kind = text
+        .as_deref()
+        .map_or(Kind::Missing, |t| classify(t, name, trigger, FORMATS));
     Ok(HookFile {
         path: path.to_path_buf(),
         kind,
@@ -86,18 +113,43 @@ pub fn examine(path: &Path) -> io::Result<HookFile> {
     })
 }
 
-fn format_of(text: &str) -> Option<u32> {
-    text.lines().find_map(|line| {
-        let rest = line.strip_prefix(MARKER)?;
-        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        digits.parse().ok()
-    })
+/// Garita's hook in some format of `formats`, an edited copy of one, or someone else's.
+pub fn classify(text: &str, name: &str, trigger: Trigger, formats: &[(u32, Script)]) -> Kind {
+    if let Some((format, _)) = formats.iter().find(|(_, s)| s(name, trigger) == text) {
+        return Kind::Garita(*format);
+    }
+    let calls_garita = calls_garita(text, trigger);
+    if text.lines().any(|l| l.starts_with(MARKER)) {
+        Kind::Modified { calls_garita }
+    } else {
+        Kind::Foreign { calls_garita }
+    }
 }
 
-fn calls_garita(text: &str) -> bool {
+/// Whether a line runs `garita run` as a command at `trigger`; `commit` is its default trigger.
+fn calls_garita(text: &str, trigger: Trigger) -> bool {
     text.lines().any(|line| {
-        let line = line.trim_start();
-        !line.starts_with('#') && line.contains("garita run")
+        let line = line.trim();
+        let line = line.strip_prefix("exec ").map_or(line, str::trim_start);
+        let Some(rest) = line.strip_prefix("garita run") else {
+            return false;
+        };
+        if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+            return false;
+        }
+        let words: Vec<&str> = rest.split_whitespace().collect();
+        let mut named = None;
+        for (i, word) in words.iter().enumerate() {
+            if *word == "--trigger" {
+                named = words.get(i + 1).copied();
+            } else if let Some(t) = word.strip_prefix("--trigger=") {
+                named = Some(t);
+            }
+        }
+        match named {
+            Some(t) => t == trigger.as_str(),
+            None => trigger == Trigger::Commit,
+        }
     })
 }
 
@@ -172,7 +224,11 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
     match inside_repository(&root, &hooks) {
         Ok(true) => {}
         Ok(false) => {
-            let shown = hooks.display();
+            let shown = match git::hooks_path_set(&root) {
+                Ok(true) => format!("{} (core.hooksPath)", hooks.display()),
+                Ok(false) => format!("{}, where .git/hooks resolves to,", hooks.display()),
+                Err(e) => return verdict::not_run(COMMAND, e.to_string()),
+            };
             let (severity, message) = if replace {
                 (
                     Severity::Info,
@@ -185,7 +241,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
                 (
                     Severity::Error,
                     format!(
-                        "{shown} (core.hooksPath) lies outside this repository and may be shared with others; pass --replace to write there anyway"
+                        "{shown} lies outside this repository and may be shared with others; pass --replace to write there anyway"
                     ),
                 )
             };
@@ -196,7 +252,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
     let mut steps = Vec::new();
     for (name, trigger) in HOOKS {
         let path = hooks.join(name);
-        let file = match examine(&path) {
+        let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => {
                 return verdict::not_run(
@@ -218,6 +274,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         }));
         return verdict::verdict(COMMAND, findings, examined_hooks(), None);
     }
+    let mut written: Vec<(PathBuf, Prior)> = Vec::new();
     for step in steps {
         match step {
             Step::Keep(f) => findings.push(f),
@@ -227,10 +284,17 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
                 path,
                 done,
             } => {
-                if let Err(e) = write_hook(&hooks, &path, &script(name, trigger)) {
-                    let error = format!("could not write {}: {e}", path.display());
+                let prior = Prior::read(&path);
+                if let Err(e) = write_hook(&hooks, &path, script(name, trigger).as_bytes(), 0o755) {
+                    let mut error = format!("could not write {}: {e}", path.display());
+                    for (path, prior) in written.iter().rev() {
+                        if let Err(e) = prior.restore(&hooks, path) {
+                            error.push_str(&format!("\ncould not restore {}: {e}", path.display()));
+                        }
+                    }
                     return verdict::not_run(COMMAND, error);
                 }
+                written.push((path, prior));
                 findings.push(done);
             }
         }
@@ -273,8 +337,8 @@ fn plan(file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) ->
     }
     match file.kind {
         Kind::Missing => write("hook-installed", format!("installed {shown}")),
-        Kind::Garita(_) => {
-            if file.executable && file.text.as_deref() == Some(script(name, trigger).as_str()) {
+        Kind::Garita(format) => {
+            if file.executable && format == HOOK_FORMAT {
                 Step::Keep(finding(
                     Severity::Info,
                     "hook-unchanged",
@@ -284,30 +348,67 @@ fn plan(file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) ->
                 write("hook-updated", format!("updated {shown}"))
             }
         }
-        Kind::Foreign { .. } if replace => write(
+        Kind::Foreign { .. } | Kind::Modified { .. } if replace => write(
             "hook-replaced",
             format!("{shown} was not garita's hook; --replace overwrote it"),
         ),
-        Kind::Foreign { .. } => Step::Keep(finding(
-            Severity::Error,
-            "hook-foreign",
-            format!(
-                "{shown} is not garita's hook, so nothing was written; pass --replace to overwrite it, or add the line `garita run --trigger {}` to it by hand",
-                trigger.as_str()
-            ),
-        )),
+        Kind::Foreign { .. } | Kind::Modified { .. } => {
+            let what = if matches!(file.kind, Kind::Modified { .. }) {
+                "was written by garita and has been edited"
+            } else {
+                "is not garita's hook"
+            };
+            Step::Keep(finding(
+                Severity::Error,
+                "hook-foreign",
+                format!(
+                    "{shown} {what}, so nothing was written; pass --replace to overwrite it, or add the line `garita run --trigger {}` to it by hand",
+                    trigger.as_str()
+                ),
+            ))
+        }
+    }
+}
+
+/// What stood at a hook's path before install wrote it, to put back when a later write fails.
+enum Prior {
+    Absent,
+    File(Vec<u8>, u32),
+    Link(PathBuf),
+}
+
+impl Prior {
+    fn read(path: &Path) -> Self {
+        if let Ok(target) = fs::read_link(path) {
+            return Prior::Link(target);
+        }
+        match (fs::read(path), fs::metadata(path)) {
+            (Ok(bytes), Ok(meta)) => Prior::File(bytes, mode_of(&meta)),
+            _ => Prior::Absent,
+        }
+    }
+
+    fn restore(&self, hooks: &Path, path: &Path) -> io::Result<()> {
+        match self {
+            Prior::Absent => fs::remove_file(path),
+            Prior::File(bytes, mode) => write_hook(hooks, path, bytes, *mode),
+            Prior::Link(target) => {
+                fs::remove_file(path)?;
+                make_link(target, path)
+            }
+        }
     }
 }
 
 /// Writes beside the hook and renames over it, so a symlink is replaced, never followed.
-fn write_hook(hooks: &Path, path: &Path, text: &str) -> io::Result<()> {
+fn write_hook(hooks: &Path, path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     fs::create_dir_all(hooks)?;
     let temp = hooks.join(format!(".garita-hook-{}", ulid::Ulid::generate()));
     let written = (|| {
         let mut file = fs::File::create(&temp)?;
-        file.write_all(text.as_bytes())?;
+        file.write_all(bytes)?;
         file.flush()?;
-        set_mode(&temp)?;
+        set_mode(&temp, mode)?;
         fs::rename(&temp, path)
     })();
     if written.is_err() {
@@ -317,14 +418,35 @@ fn write_hook(hooks: &Path, path: &Path, text: &str) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn set_mode(path: &Path) -> io::Result<()> {
+fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
 #[cfg(not(unix))]
-fn set_mode(_: &Path) -> io::Result<()> {
+fn set_mode(_: &Path, _: u32) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(unix)]
+fn mode_of(meta: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn mode_of(_: &fs::Metadata) -> u32 {
+    0o755
+}
+
+#[cfg(unix)]
+fn make_link(target: &Path, path: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, path)
+}
+
+#[cfg(not(unix))]
+fn make_link(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::other("symlinks are not supported here"))
 }
 
 /// Removes the hooks garita wrote; any other file is left where it is.
@@ -335,10 +457,10 @@ pub fn uninstall(dir: &Path) -> Verdict {
         Err(e) => return verdict::not_run(COMMAND, e.to_string()),
     };
     let mut findings = Vec::new();
-    for (name, _) in HOOKS {
+    for (name, trigger) in HOOKS {
         let path = hooks.join(name);
         let shown = path.display();
-        let file = match examine(&path) {
+        let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => return verdict::not_run(COMMAND, format!("could not read {shown}: {e}")),
         };
@@ -350,7 +472,7 @@ pub fn uninstall(dir: &Path) -> Verdict {
                 }
                 ("hook-removed", format!("removed {shown}"))
             }
-            Kind::Missing | Kind::Foreign { .. } => (
+            Kind::Missing | Kind::Foreign { .. } | Kind::Modified { .. } => (
                 "hook-foreign",
                 format!("{shown} is not garita's hook, so it was left in place"),
             ),

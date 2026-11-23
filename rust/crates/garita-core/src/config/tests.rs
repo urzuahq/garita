@@ -697,3 +697,14 @@ fn the_rfc1_example_requires_the_running_version() {
     let requires = c.requires.as_ref().unwrap();
     assert_eq!(satisfies(requires, env!("CARGO_PKG_VERSION")), Ok(true));
 }
+
+#[test]
+fn a_command_that_starts_with_a_placeholder_has_no_program() {
+    let e = errs(&with_check("    run: '{files}'\n"));
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(
+        e[0].to_string().contains("must start with a program"),
+        "{e:?}"
+    );
+    assert_eq!(e[0].path(), "checks.c.run");
+}

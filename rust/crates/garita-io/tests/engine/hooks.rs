@@ -3,7 +3,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use garita_core::report::{Report, RunStatus, Severity, Trigger};
-use garita_io::hooks::{self, HOOKS};
+use garita_io::hooks::{self, HOOKS, Kind};
 
 use crate::support::{Repo, assert_contract, finding, git_in, rules};
 
@@ -120,7 +120,7 @@ fn from_a_linked_worktree_hooks_go_where_git_reads_them() {
 }
 
 #[test]
-fn installing_twice_is_unchanged_and_an_older_hook_is_updated() {
+fn installing_twice_is_unchanged() {
     let repo = configured();
     install(&repo.root(), false);
     let report = install(&repo.root(), false);
@@ -128,15 +128,123 @@ fn installing_twice_is_unchanged_and_an_older_hook_is_updated() {
         rules(&report, "garita"),
         ["hook-unchanged", "hook-unchanged"]
     );
-    let pre_push = repo.root().join(".git/hooks/pre-push");
-    fs::write(
-        &pre_push,
-        "#!/bin/sh\n# garita hook format 0: old\nexec garita run\n",
-    )
-    .unwrap();
-    let report = install(&repo.root(), false);
-    assert_eq!(rules(&report, "garita"), ["hook-unchanged", "hook-updated"]);
     assert_installed(&repo.root().join(".git/hooks"));
+}
+
+fn script_v0(name: &str, trigger: Trigger) -> String {
+    format!(
+        "#!/bin/sh\n# garita hook format 0: {name}\nexec garita run --trigger {}\n",
+        trigger.as_str()
+    )
+}
+
+#[test]
+fn an_exact_older_format_script_is_garitas_in_that_format() {
+    let formats: &[(u32, hooks::Script)] = &[(0, script_v0), (1, hooks::script)];
+    let old = script_v0("pre-push", Trigger::Push);
+    assert_eq!(
+        hooks::classify(&old, "pre-push", Trigger::Push, formats),
+        Kind::Garita(0)
+    );
+    let edited = format!("{old}echo more\n");
+    assert!(matches!(
+        hooks::classify(&edited, "pre-push", Trigger::Push, formats),
+        Kind::Modified { .. }
+    ));
+    let current = hooks::script("pre-push", Trigger::Push);
+    assert_eq!(
+        hooks::classify(&current, "pre-push", Trigger::Push, hooks::FORMATS),
+        Kind::Garita(1)
+    );
+    assert!(!hooks::classify(&current, "pre-commit", Trigger::Commit, hooks::FORMATS).is_garita());
+}
+
+#[test]
+fn a_file_that_only_carries_the_marker_is_refused_and_survives_uninstall() {
+    let repo = configured();
+    let dir = repo.root().join(".git/hooks");
+    fs::create_dir_all(&dir).unwrap();
+    let mine = "#!/bin/sh\necho mine\n# garita hook format 1: copied\n";
+    fs::write(dir.join("pre-commit"), mine).unwrap();
+    let report = install(&repo.root(), false);
+    assert_eq!(report.exit_code(), 1);
+    assert!(has_rule(&report, "hook-foreign"));
+    assert_eq!(fs::read_to_string(dir.join("pre-commit")).unwrap(), mine);
+    assert!(!dir.join("pre-push").exists());
+    uninstall(&repo.root());
+    assert_eq!(fs::read_to_string(dir.join("pre-commit")).unwrap(), mine);
+}
+
+#[test]
+fn garitas_hook_with_a_line_appended_is_foreign_to_install_and_uninstall() {
+    let repo = configured();
+    install(&repo.root(), false);
+    let path = repo.root().join(".git/hooks/pre-push");
+    let edited = format!("{}echo extra\n", hooks::script("pre-push", Trigger::Push));
+    fs::write(&path, &edited).unwrap();
+    let report = install(&repo.root(), false);
+    assert_eq!(report.exit_code(), 1);
+    assert!(
+        finding(&report, "hook-foreign")
+            .message
+            .contains("has been edited")
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), edited);
+    let report = uninstall(&repo.root());
+    assert_eq!(rules(&report, "garita"), ["hook-removed", "hook-foreign"]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), edited);
+}
+
+#[test]
+fn a_failed_second_write_restores_the_first_hook() {
+    let repo = configured();
+    let dir = repo.root().join(".git/hooks");
+    fs::create_dir_all(dir.join("pre-push/inside")).unwrap();
+    let mine = "#!/bin/sh\necho mine\n";
+    fs::write(dir.join("pre-commit"), mine).unwrap();
+    fs::set_permissions(dir.join("pre-commit"), fs::Permissions::from_mode(0o700)).unwrap();
+    let report = install(&repo.root(), true);
+    assert_eq!(report.status, RunStatus::NotRun, "{report:#?}");
+    assert_eq!(fs::read_to_string(dir.join("pre-commit")).unwrap(), mine);
+    let mode = fs::metadata(dir.join("pre-commit"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+    fs::remove_file(dir.join("pre-commit")).unwrap();
+    install(&repo.root(), true);
+    assert!(!dir.join("pre-commit").exists());
+    let leftovers: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".garita-hook-"))
+        .collect();
+    assert!(leftovers.is_empty());
+}
+
+#[test]
+fn a_refused_default_hooks_dir_does_not_blame_core_hooks_path() {
+    let repo = configured();
+    let outside = repo.base().join("outside-hooks");
+    fs::create_dir_all(&outside).unwrap();
+    let hooks_dir = repo.root().join(".git/hooks");
+    let _ = fs::remove_dir_all(&hooks_dir);
+    symlink(&outside, &hooks_dir).unwrap();
+    let report = install(&repo.root(), false);
+    let message = &finding(&report, "hooks-dir-shared").message;
+    assert!(!message.contains("core.hooksPath"), "{message}");
+    assert!(message.contains(".git/hooks resolves to"), "{message}");
+    repo.git(&["config", "core.hooksPath", outside.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    assert!(
+        finding(&report, "hooks-dir-shared")
+            .message
+            .contains("(core.hooksPath)")
+    );
+}
+
+fn has_rule(report: &Report, rule: &str) -> bool {
+    rules(report, "garita").contains(&rule)
 }
 
 #[test]
