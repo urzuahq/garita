@@ -10,7 +10,7 @@
 set -uo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/leakguard.XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/leakguard.XXXXXX") || { echo "test-no-leak: could not create a temporary directory" >&2; exit 2; }
 trap 'rm -rf "$tmp"' EXIT
 
 if [ "$#" -eq 0 ]; then
