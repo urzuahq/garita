@@ -265,9 +265,10 @@ agent-cli-kit RFC-3: the report's `checks` and the fields of each entry (§1), `
 what garita does with those keys, and, under garita's extended contract below, what garita adds
 beyond them.
 
-**One JSON object, nothing else.** stdout is exactly one JSON object. garita prints nothing on
-stderr except a diagnostic when garita itself cannot do its job, and nothing a reader needs exists
-only on stderr.
+**One JSON object, nothing else.** Every command prints exactly one JSON object on stdout and
+nothing on stderr, except a diagnostic when garita cannot write that object. Nothing a reader needs
+exists only on stderr. `--help`, `--version` and a command line that names no command are the
+argument parser's own text.
 
 The report below illustrates a run report. It defines nothing.
 
@@ -338,8 +339,8 @@ What garita does with the report:
   whenever the run started in a repository; a run that could not start at all has none.
 - **Suppression.** A check's `min_severity` (§3) decides what is counted in its `suppressed`.
 - **What `garita describe` declares.** It prints the object agent-cli-kit RFC-1 §3 defines. It declares
-  `run`, `doctor` and `hooks install`, each with profile `run`, including the two that select no
-  checks. `run` declares the `base-ref` scope argument. It does not declare `paths`: its positional
+  `run`, `doctor`, `hooks install` and `hooks uninstall`, each with profile `run`, including the
+  three that select no checks. `run` declares the `base-ref` scope argument. It does not declare `paths`: its positional
   arguments are check names, so it takes files through `--files` (agent-cli-kit RFC-3 §6).
 
 #### garita's extended contract
@@ -348,10 +349,12 @@ These are garita's own conventions and keys beyond agent-cli-kit's base and run 
 not the shared contract, they contradict nothing in it, and a reader that ignores them loses nothing
 the shared contract promises.
 
-- **`next_action`.** It holds the narrowest command that re-runs what failed: the failing checks, at
-  the same trigger, on the failing files when every one of them has files. It never names anything
-  that is not a check: an error that belongs to the run, such as a trigger over its budget, re-runs
-  the whole trigger. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+- **`next_action`.** After `garita run` it holds the narrowest command that re-runs what failed:
+  the failing checks, at the same trigger, on the failing files when every one of them has files.
+  Only a check is ever named as a check to re-run: an error that belongs to the run, such as a
+  trigger over its budget, re-runs the whole trigger. When the run is `not-run` it is
+  `garita doctor`. It is `null` on `pass` and `warn`, and always `null` from `doctor` and the
+  `hooks` commands, whose findings say what to change.
   `next_action_reason` is a count of what failed, such as `1 error in 1 check`.
 - **`fingerprint`.** An opaque string, stable across runs for the same finding. How garita computes
   it is its own, and a reader must not parse it.
@@ -420,7 +423,8 @@ produced it. What a receipt holds is agent-cli-kit's: its field list and the voc
 draft, and this record does not restate them.
 
 A run that was `not-run` writes a receipt too, with `result` `FAILED`: a gate that could not run is
-not evidence of a pass.
+not evidence of a pass. Older receipts are deleted after the new one is written, so a
+`receipts-unpruned` finding is in the printed report and not in the receipt's copy of it.
 Receipts live under `.garita/receipts/` (ignored by git) and, in CI, in the run's artifacts. Per urzua
 RFC-3 §5, a run is self-dating and self-scoping, and the receipt is the history: garita keeps no log in
 the repository.
