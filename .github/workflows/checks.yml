@@ -1,0 +1,163 @@
+name: checks
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The ref to check out. Defaults to the triggering ref.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (fmt, clippy, machete, deny, script tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: install cargo-deny and cargo-machete (pinned, checksummed)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
+          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o deny.tgz https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.4/cargo-deny-0.19.4-x86_64-unknown-linux-musl.tar.gz
+          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o machete.tgz https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.1/cargo-machete-v0.9.1-x86_64-unknown-linux-musl.tar.gz
+          echo "3bd58b784e83715b86ddbc9deac591890372ec77fda5741bb0826970b958506f  deny.tgz" | sha256sum -c -
+          echo "640b0814480b401e4e72201e52a13e1311b8eb8d7c27faa08bbe9886f252f26d  machete.tgz" | sha256sum -c -
+          tar -xzf deny.tgz --strip-components=1 --wildcards '*/cargo-deny'
+          tar -xzf machete.tgz --strip-components=1 --wildcards '*/cargo-machete'
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: cargo machete (unused dependencies)
+        run: cargo machete
+      - name: cargo deny (advisories, bans, licenses, sources)
+        run: cargo deny check
+      - uses: ./.github/actions/install-knope
+      - name: knope.toml is valid
+        working-directory: .
+        run: knope --validate
+      - name: knope is pinned in one place
+        working-directory: .
+        run: .github/scripts/knope-pin.test.sh
+      - name: nextest is pinned in one place
+        working-directory: .
+        run: .github/scripts/nextest-pin.test.sh
+      - name: release invariants planted-violation cases
+        working-directory: .
+        run: .github/scripts/release-invariants.test.sh
+      - name: the aggregate gate fails closed (planted-violation cases)
+        working-directory: .
+        run: .github/scripts/ci-gate.test.sh
+      - name: the leak guard fails closed (planted-violation cases)
+        working-directory: .
+        run: .github/scripts/test-no-leak.test.sh
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+          shared-key: build
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo build
+        run: cargo build --workspace --locked
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+          shared-key: test-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/install-nextest
+      - name: cargo nextest and doctests (and no leaked fixture directories)
+        run: .github/scripts/ci-tests.sh
+
+  contract:
+    name: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - run: scripts/contract-check.sh --release
+
+  result:
+    name: result
+    needs: [lint, build, test, contract]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+          sparse-checkout: .github/scripts
+      - name: every check job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: .github/scripts/ci-gate.sh
