@@ -1,8 +1,5 @@
 # Install
 
-There is no release yet. Until the first one is published, the install script fails and the only way
-to run garita is to [build it from source](#build-from-source).
-
 ## Install a release
 
 Releases are published at <https://github.com/urzuahq/garita/releases> for two targets:
@@ -20,10 +17,13 @@ release:
 
 ```sh
 tag=$(gh release view --repo urzuahq/garita --json tagName --jq .tagName)
-curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" | sh -s -- --version "$tag"
+curl -fsSL --proto '=https' --tlsv1.2 -o garita-install.sh "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" \
+  && sh garita-install.sh --version "$tag"
 ```
 
-To read the script before running it, save it with `curl -fsSLO` and run `sh install.sh`. The script
+The command saves the script as `garita-install.sh` and runs it only if the download succeeded; a
+script piped straight into `sh` would exit 0 on a failed download, having run nothing. Read the
+file before running it if you want to. The script
 verifies the archive it downloads, but nothing verifies the script itself: it is fetched over HTTPS
 from the tag, and a tag can be moved. Where that matters, pin a commit sha in the URL in place of the
 tag.
@@ -35,8 +35,8 @@ Pin the version and the archive's sha256, so the install fails if the archive is
 ```sh
 tag="${GARITA_TAG:?set GARITA_TAG to an exact release tag, such as vX.Y.Z}"
 sha256="${GARITA_SHA256:?set GARITA_SHA256 to the sha256 of this platform's archive at that tag}"
-curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" \
-  | sh -s -- --version "$tag" --sha256 "$sha256"
+curl -fsSL --proto '=https' --tlsv1.2 -o garita-install.sh "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" \
+  && sh garita-install.sh --version "$tag" --sha256 "$sha256"
 ```
 
 A release has no checksum file. Compute the sha256 of the archive from the release you pin:
