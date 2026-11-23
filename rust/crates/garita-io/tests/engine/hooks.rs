@@ -423,13 +423,24 @@ fn the_format_two_hook_hides_the_verdict_at_a_terminal() {
     }
     let repo = configured();
     let hook = hook_script_with_stub(&repo);
+    // util-linux `script` takes the command with -c and passes its exit code on with -e; the BSD
+    // one on macOS takes the command as arguments after the output file.
+    let hook = hook.to_str().unwrap();
+    let args: Vec<&str> = if cfg!(target_os = "linux") {
+        vec!["-qec", hook, "/dev/null"]
+    } else {
+        vec!["-q", "/dev/null", hook]
+    };
     let out = std::process::Command::new("/usr/bin/script")
-        .args(["-qec", hook.to_str().unwrap(), "/dev/null"])
+        .args(args)
         .env("PATH", bin_path(&repo))
+        .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
     let shown = String::from_utf8_lossy(&out.stdout);
     assert!(shown.contains("the summary"), "{shown}");
     assert!(!shown.contains("verdict"), "{shown}");
-    assert_eq!(out.status.code(), Some(3), "{shown}");
+    if cfg!(target_os = "linux") {
+        assert_eq!(out.status.code(), Some(3), "{shown}");
+    }
 }
