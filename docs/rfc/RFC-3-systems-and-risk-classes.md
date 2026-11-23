@@ -1,18 +1,15 @@
 ---
-Stable-Id: 01M82HJ6S3BY3PXRGJW1NXH0XZ
+Stable-Id: 01M838QGHEGFDWX5C3D82Z5D6J
 Status: Draft
-Date: 2026-11-22
+Date: 2026-11-23
 Author: beauwilliams
 ---
-# 2 — Adapters, systems and risk classes
+# 3 — Systems and risk classes
 
 ## Summary
 
-RFC-1 gives every check one verdict: pass, warn or fail. This RFC says what garita is in relation to
-the tools it runs, and adds three things on top of RFC-1.
-
-**Garita is the control plane.** It answers no question about the change itself. It decides what
-runs, where, within which budget, and which evidence counts, and it returns one verdict.
+RFC-1 gives every change the same gate. This RFC lets a repository ask for more where more is at
+stake.
 
 1. **Systems.** Every tool garita runs belongs to one of three systems, named for the kind of compute
    that answers. System 0 is fast deterministic compute: urzua, linters, type checkers, build tools,
@@ -20,9 +17,9 @@ runs, where, within which budget, and which evidence counts, and it returns one 
 2. **Risk classes.** Before any change is made, the repository declares which parts of it carry which
    risk, and how far up the systems a change to each must go. Risk is the one axis the three systems
    sit on.
-3. **Adapters.** Every tool, in any system, reaches garita through an adapter that describes it,
-   invokes it at a scope, parses its output and reports its metrics. A tool that already speaks
-   garita's contract is **native** and needs no adapter. urzua is the first native tool.
+
+Garita is the control plane for both. It answers no question about the change itself. It decides
+what runs, where, within which budget, and which evidence counts.
 
 ## Motivation
 
@@ -46,11 +43,6 @@ argued after it lands. Declaring it ahead of time, per area of the repository, t
 configuration a gate can enforce and a reviewer can read. A low-risk change needs a System 0 pass and
 nothing more. A critical one is not done until System 2 has answered.
 
-**Every new tool costs a parser.** RFC-1 §6 lists the parsers garita ships, and running real hooks
-needs input-side wrapping as well: one run per package directory, output that arrives through a task
-runner, checks that take no files. These are one concern in two places. A tool that already returns
-structured findings should need neither.
-
 ## Proposal
 
 ### 1. The control plane
@@ -70,11 +62,11 @@ the same tool results, it returns the same verdict.
 | System | Compute | Tools | Deterministic |
 |---|---|---|---|
 | 0 | Fast, deterministic | urzua, oxlint, oxfmt, tsc, cargo, test runners, any command with an exit code | Yes |
-| 1 | A decision model | decision-agent-kit, and tools built on decision models | No |
+| 1 | A decision model | Tools built with decision-agent-kit | No |
 | 2 | LLM inference | An LLM reviewer | No |
 
-A check declares its system, and its adapter's `describe` states it. System 0 is the default, so
-every RFC-1 check is a System 0 check without change.
+A check declares its system, and its adapter's or its native tool's `describe` states it (RFC-2).
+System 0 is the default, so every RFC-1 check is a System 0 check without change.
 
 A slow deterministic check is still System 0. Running a test on the merge base to see it fail there is
 deterministic, so it is a System 0 check with a larger budget, placed at a later trigger.
@@ -122,7 +114,7 @@ checks:
   that judges a change is the one on the target branch. `.garita/config.yaml` is matched to the
   highest declared class by construction.
 - **A class needs a check to satisfy it.** A class that requires a system for which no check is
-  declared is a configuration error, exit 1.
+  declared is a configuration error: `not-run`, exit 2.
 - **`default` is `low`** unless the repository says otherwise, under RFC-1's opt-in principle.
 - `evidence.accept` overrides RFC-1 §8's setting for the class, so critical work can refuse local
   receipts while low-risk work accepts them.
@@ -133,20 +125,23 @@ checks:
 RFC-1 said only a deterministic check can block. With risk classes that becomes:
 
 - A System 1 or System 2 check **blocks only where the change's risk class requires its system**.
-  Anywhere else it is advisory and its findings are capped at `warn`, as in RFC-1.
-- Garita's part stays deterministic. It checks that the verdict exists, that it is pinned to this
-  exact tree, that it came from a model the configuration allows, and that it says pass. It never
-  judges what the model said.
+  Anywhere else it is advisory and its findings are capped at `warning`, as in RFC-1.
+- Garita's part stays deterministic. It checks that the verdict exists, that its pin matches, that it
+  came from a model the configuration allows, and that it says pass. It never judges what the model
+  said.
 - **A verdict is asked once and then cited.** A model can answer differently on a second run, so a
-  required verdict is written to a receipt pinned to the tree hash, the model and the prompt version.
-  A later run over the same tree reads the receipt and does not ask again. The gate's result for a
-  given tree is then stable, though it is not reproducible from scratch.
+  required verdict is written to a receipt and a later run reads the receipt instead of asking again.
+  The gate's result for a given change is then stable, though it is not reproducible from scratch.
+- **What a verdict is pinned to.** The tree hash, the model, the prompt version, the task it was
+  judged against and the risk policy in force. A change to any of them makes the verdict stale, and a
+  stale verdict does not count. Without the task in the pin, an old "this is the right test" would
+  still be cited after the task changed.
 - **A decision model returns a score, not prose.** A System 1 check declares the `threshold` its
   score is judged against, and the verdict records both.
 - **A class should require only a measured check.** A System 1 or System 2 check that blocks should
   state how often it misses and how often it speaks wrongly, measured on recorded changes.
 
-### 5. Where each system runs
+### 5. Where each system runs, and where a class is enforced
 
 | Trigger | Budget (RFC-1 §3 defaults) | Systems it runs |
 |---|---|---|
@@ -155,74 +150,23 @@ RFC-1 said only a deterministic check can block. With risk classes that becomes:
 | `ci` | 10m | 0, 1, 2 |
 | `merge` | its own | 0, 1, 2 |
 
-A class's requirement is judged at the **last** trigger the configuration runs for it, normally `ci`
-or `merge`. Earlier triggers run what fits their budgets and report the highest system reached as
-information, so a commit is never blocked for lacking a System 2 verdict it could not afford. Since
-`--no-verify` skips the local hooks, the last trigger is also the one a person cannot skip.
+Earlier triggers run what fits their budgets and report the highest system reached as information, so
+a commit is never blocked for lacking a System 2 verdict it could not afford.
+
+**A class that requires System 1 or 2 is enforced only at `ci` or `merge`.** A local hook can be
+skipped (`--no-verify`, an environment variable, an agent hook that times out), so a requirement
+judged only at commit or push is not enforced at all. Two rules follow:
+
+- A configuration whose class requires System 1 or 2 and that runs no check for it at `ci` or
+  `merge` is a configuration error.
+- CI only binds when the forge requires its result before merging. `garita doctor` reports a
+  repository whose target branch does not require garita's status, and a merge queue whose CI does
+  not run on the queue's merged result.
 
 Budgets apply to every system. For System 2 the metric that matters is cost, which RFC-1 §4 already
 allows: a budget is a limit on any metric a check reports.
 
-### 6. Adapters
-
-An adapter has four parts:
-
-| Part | What it does |
-|---|---|
-| `describe` | The tool's name, its system, the scopes it accepts and the metrics it reports |
-| `invoke` | Turns a trigger's scope into the tool's arguments |
-| `parse` | Turns the tool's output into findings with file, line, rule and message, and reports what it examined |
-| `metrics` | The numbers a budget can limit (RFC-1 §4): duration, files examined, tests run, cost |
-
-RFC-1's parsers become the `parse` part of built-in adapters. A plugin adapter uses RFC-1 §6's
-subprocess protocol, with `--describe` returning the `describe` part.
-
-`invoke` owns everything about how a tool is called:
-
-- **Placeholders.** `{files}` and `{affected}` are filled from the scope (RFC-1 §3). A check whose
-  command has no placeholder always runs. That is not a `no-input` skip.
-- **`partition`.** One run per matching root, from inside it, with paths rebased to the root.
-  Findings are mapped back to repository-relative paths.
-- **`exclude`.** Globs removed from the check's input.
-- **`via`.** The tool runs through a task runner, for example `via: turbo`. The adapter splits the
-  runner's output by task, maps each task to its package directory and hands each part to `parse`.
-
-```yaml
-checks:
-  lint:
-    run: oxlint {files}
-    parser: oxlint
-    partition: { by: dir, roots: ["packages/*"] }
-    exclude: ["packages/docs/**"]
-  types:
-    run: turbo type-check {affected}
-    parser: tsc
-    via: turbo
-```
-
-### 7. Native tools
-
-A tool is **native** when it speaks garita's contract itself, so it needs no adapter:
-
-- stdout is one JSON object with a `status` and typed findings, each with file, line, rule and message;
-- it reports what it examined, so a run over nothing is distinguishable from a pass;
-- it returns a `next_action`, the narrowest command to run next;
-- it accepts a scope as arguments (paths, a base ref);
-- it answers `describe` with the same shape a plugin adapter returns, including its system.
-
-A native check is declared with `native: <tool>` instead of `run` and `parser`. Garita passes it the
-scope and reads its result unchanged.
-
-**urzua is the first native tool**, in System 0. RFC-1 already defines garita's output as the urzua
-contract (urzua RFC-3). `urzua check` returns one JSON object, `status`, `findings[]`, a
-files-examined count and `next_action`, and takes paths and `--base`. What it lacks, for this RFC, is
-a `describe` answer and the shared examined key: urzua reports `files_examined`, and the contract's
-key is `examined`, an object with one count per unit (`{ "files": 38 }`).
-
-decision-agent-kit is the kit System 1 tools are built with. The first System 1 checks are expected
-to be tools built on it, not the kit itself.
-
-### 8. Contract additions
+### 6. Contract additions
 
 ```json
 {
@@ -231,7 +175,8 @@ to be tools built on it, not the kit itself.
   "checks": [
     { "name": "lint", "system": 0, "status": "pass" },
     { "name": "right-test", "system": 1, "status": "pass",
-      "verdict": { "score": 0.93, "threshold": 0.8, "model": "…", "tree": "…", "receipt": "…" } },
+      "verdict": { "score": 0.93, "threshold": 0.8, "model": "…", "tree": "…", "task": "…",
+                   "receipt": "…" } },
     { "name": "test-review", "system": 2, "status": "skipped" }
   ]
 }
@@ -239,31 +184,24 @@ to be tools built on it, not the kit itself.
 
 `risk.reached` is the highest system for which every required check passed, counting up from 0.
 
-### 9. Relation to RFC-1
+### 7. Relation to RFC-1 and to urzua
 
-This RFC changes three statements in RFC-1, in the same change:
-
-- the principle "Deterministic blocks, advisory everything else" becomes "Deterministic by default"
-  (section 4 above);
-- §9 item 4, model checks being advisory, gains the risk-class exception;
-- the non-goal "Model-judged blocking" is narrowed to blocking outside a declared risk class.
-
-### 10. Relation to urzua
+This RFC changes three statements in RFC-1, in the same change: the principle "Deterministic blocks,
+advisory everything else" becomes "Deterministic by default"; §9 item 4, model checks being advisory,
+gains the risk-class exception; and the non-goal "Model-judged blocking" is narrowed to blocking
+outside a declared risk class.
 
 - urzua does not score risk; urzua RFC-27 §2 places risk scoring outside its engine. Garita owns risk.
-- urzua is a System 0 native check and, through RFC-1 §9's `gate:` locator, can cite a garita receipt
-  as evidence. A receipt that records the system reached lets a record cite a System 2 verdict.
+- urzua is a System 0 native check (RFC-2) and, through RFC-1 §9's `gate:` locator, can cite a garita
+  receipt as evidence. A receipt that records the system reached lets a record cite a System 2
+  verdict.
 - Whether a urzua record can itself declare the system its evidence needs is a urzua question, left
   to a urzua RFC if a real case asks for it.
 
 ## Phases
 
-- **Phase 0:** the adapter interface with `partition`, `exclude` and `via`, used by the Phase 0
-  parsers. Every check is System 0. No native protocol, no risk.
-- **Phase 1:** native tools, `describe`, and urzua as the first native check; the shared contract's
-  key names settled.
-- **Phase 2:** risk classes, System 1 and System 2 checks, verdict receipts and the `risk` finding,
-  alongside the `gate:` locator.
+Everything here is Phase 2 of RFC-1, alongside the `gate:` locator: risk classes, System 1 and
+System 2 checks, verdict receipts and the `risk` finding. Phases 0 and 1 run System 0 checks only.
 
 ## Decided so far
 
@@ -271,25 +209,22 @@ Decided by the maintainer on 2026-11-22:
 
 - **Risk is garita's.**
 - **Garita is the control plane**, not a System 0 tool. urzua, linters and build tools are System 0.
-- **urzua is the first native tool**, reached without an adapter.
 - **The systems:** 0 asks whether the test exists and is linked properly; 1 asks whether it tests the
   right thing, answered by tools built on decision models; 2 asks what the test does, answered by LLM
   inference.
 - **A model's verdict blocks where a declared risk class requires it**, and garita checks
-  deterministically that the verdict exists, is pinned to the tree and says pass.
-- **The examined key** is `examined`, an object with one count per unit (`files`, `tests`, ...).
-  urzua and garita both use it.
+  deterministically that the verdict exists, is pinned and says pass.
 
 ## Open questions
 
-1. **One contract.** Is the shared contract a document in urzua (RFC-3), in garita, or in its own
-   repository, and how are its versions negotiated?
-2. **What the task is.** System 1 asks whether a test matches the task. Where does garita get the
+1. **What the task is.** System 1 asks whether a test matches the task. Where does garita get the
    task: the urzua record the change cites, the PR description, or a declared input per check?
-3. **What pins a verdict.** Tree hash, model and prompt version are proposed. Does a change to the
-   task, or to the risk policy, invalidate a cached verdict?
-4. **Which models count.** How a class names the models allowed to give a required verdict, and
-   whether a person can stand in for one.
+2. **Which models count.** How a class names the models allowed to give a required verdict.
+3. **A person's override.** Whether a named person can stand in for a failed or unavailable model
+   verdict, and how that is recorded so it is visible later.
+4. **A check that answers differently.** A model check that flips between pass and fail on the same
+   pin is flaky. Whether such a check is quarantined (still run, unable to block) with an owner and
+   an expiry.
 5. **Matching beyond paths.** Packages, records a change cites, labels. A label is set on the forge,
    so a local run cannot see it; is that acceptable for a class that is judged only in CI?
 6. **Systems in urzua.** Should urzua's `embodiment.tiers` record the system that verified a claim,
@@ -305,7 +240,7 @@ Decided by the maintainer on 2026-11-22:
 
 ## References
 
-- RFC-1: the checks, triggers, budgets, parsers, receipts and the `gate:` locator this builds on.
-- urzua RFC-3: the output contract a native tool speaks.
+- RFC-1: the checks, triggers, budgets, receipts and the `gate:` locator this builds on.
+- RFC-2: adapters and native tools, whose `describe` states a tool's system.
 - urzua RFC-27: the boundary that puts risk scoring outside urzua.
 - urzua ADR-101: the principles inherited, including the content-scope ceiling: a check verifies presence and shape, never meaning.
