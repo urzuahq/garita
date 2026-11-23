@@ -360,6 +360,10 @@ pub fn worktree_tree(root: &Path) -> Result<ObjectId, GitError> {
     let temp = TempIndex::seeded(root)?;
     let mut add = temp.command(root);
     add.args(["add", "-A", "--", "."]);
+    // Naming an ignored path, even to exclude it, makes `git add` fail.
+    if !is_ignored(root, Path::new(".garita/receipts/"))? {
+        add.arg(":(exclude).garita/receipts");
+    }
     run_cmd(add)?;
     let mut write = temp.command(root);
     write.arg("write-tree");

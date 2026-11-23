@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod argv;
 pub mod config;
+pub mod glob;
 pub mod object_id;
 pub mod receipt;
 pub mod report;

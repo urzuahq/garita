@@ -10,6 +10,7 @@ use crate::report::{CheckKind, Examined, Finding, Severity};
 
 mod exit_code;
 mod fingerprint;
+mod invoke;
 mod oxfmt;
 mod oxlint;
 mod path;
@@ -17,6 +18,7 @@ mod tsc;
 pub mod turbo;
 
 pub use fingerprint::fingerprint;
+pub use invoke::complete_turbo_argv;
 pub use path::rebase;
 pub use tsc::count_project_files;
 

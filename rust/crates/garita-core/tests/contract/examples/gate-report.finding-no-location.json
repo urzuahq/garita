@@ -28,7 +28,7 @@
       "severity": "error"
     }
   ],
-  "next_action": "garita run records",
+  "next_action": "garita run --trigger push records",
   "next_action_inputs": [],
   "next_action_reason": "1 error in 1 check",
   "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",

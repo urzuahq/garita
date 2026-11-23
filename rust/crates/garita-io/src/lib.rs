@@ -2,6 +2,7 @@
 
 pub mod clock;
 pub mod config_file;
+pub mod engine;
 pub mod git;
 pub mod process;
 pub mod receipts;

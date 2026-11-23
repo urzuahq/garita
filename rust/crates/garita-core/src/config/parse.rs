@@ -9,7 +9,7 @@ use super::{
     EvidenceAccept, MergeConfig, MergeMode, OnCrash, OnExceed, Partition, Regression,
     TriggerConfig, VersionReq, Worktree, parse_duration,
 };
-use crate::argv::Command;
+use crate::argv::{Command, Placeholder};
 use crate::report::{CheckKind, ScopeKind, Trigger};
 
 const TOP_KEYS: &[&str] = &[
@@ -33,13 +33,16 @@ const CHECK_KEYS: &[&str] = &[
     "exclude",
     "partition",
     "via",
+    "cwd",
     "kind",
     "budget",
     "on_exceed",
     "on",
     "advisory",
 ];
-const BUILTIN_FORBIDS: &[&str] = &["parser", "globs", "partition", "via", "exclude"];
+const BUILTIN_FORBIDS: &[&str] = &["parser", "globs", "partition", "via", "exclude", "cwd"];
+pub(super) const RESERVED_CHECK: &str = "garita";
+pub(super) const VIA_TURBO: &str = "turbo";
 const ON_EXCEED: &[(&str, OnExceed)] = &[
     ("warn", OnExceed::Warn),
     ("fail", OnExceed::Fail),
@@ -453,6 +456,10 @@ impl Walker {
         let mut checks = Vec::new();
         for (key, v) in map {
             match key.as_str() {
+                Some(RESERVED_CHECK) => self.invalid(
+                    &join("checks", RESERVED_CHECK),
+                    "the name `garita` is reserved for findings about the run itself; rename the check",
+                ),
                 Some(name) if is_check_name(name) => checks.extend(self.check(name, v)),
                 Some(name) => self.invalid(
                     &join("checks", name),
@@ -484,6 +491,7 @@ impl Walker {
         let via = f
             .get("via")
             .and_then(|v| self.string(v, &join(&path, "via")));
+        let cwd = f.get("cwd").and_then(|v| self.cwd(v, &join(&path, "cwd")));
         let kind = f.get("kind").and_then(|v| {
             let options: Vec<(&str, CheckKind)> =
                 CheckKind::ALL.iter().map(|k| (k.as_str(), *k)).collect();
@@ -507,12 +515,49 @@ impl Walker {
             exclude,
             partition,
             via,
+            cwd,
             kind,
             budget,
             on_exceed,
             on: on?,
             advisory,
         })
+        .inspect(|check| self.check_invocation(check, &path))
+    }
+
+    fn cwd(&mut self, value: &Value, path: &str) -> Option<String> {
+        let dir = self.string(value, path)?;
+        let segments: Vec<&str> = dir
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect();
+        if dir.starts_with('/') || dir.contains('\\') || segments.contains(&"..") {
+            self.invalid(
+                path,
+                "a repository-relative directory with `/` separators and no `..`",
+            );
+            return None;
+        }
+        (!segments.is_empty()).then(|| segments.join("/"))
+    }
+
+    fn check_invocation(&mut self, check: &Check, path: &str) {
+        let CheckForm::Run { command, .. } = &check.form else {
+            return;
+        };
+        if let Some(via) = check.via.as_deref().filter(|v| *v != VIA_TURBO) {
+            let message =
+                format!("`{via}` is not a task runner garita knows; the only one is `turbo`");
+            self.invalid(&join(path, "via"), message);
+        }
+        if check.cwd.is_some() && check.partition.is_some() {
+            let message = "a check runs in one `cwd` or once per `partition` root, not both";
+            self.invalid(&join(path, "cwd"), message);
+        }
+        if command.placeholders().contains(&Placeholder::Affected) && check.via.is_none() {
+            let message = "`{affected}` is filled by a task runner; add `via: turbo`";
+            self.invalid(&join(path, "run"), message);
+        }
     }
 
     fn form(&mut self, f: &Fields<'_>, path: &str) -> Option<CheckForm> {

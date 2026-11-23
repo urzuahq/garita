@@ -419,3 +419,31 @@ fn hash_object_matches_git() {
     let want = git(r, &["hash-object", "--", "sp ace.txt"]);
     assert_eq!(g::hash_object(r, &file).unwrap().as_str(), want.trim());
 }
+
+#[test]
+fn worktree_tree_never_includes_receipts_whether_ignored_or_not() {
+    for ignored in [false, true] {
+        let tmp = TempDir::new();
+        let r = tmp.path();
+        init(r);
+        write(r, "a.ts", "a\n");
+        if ignored {
+            write(r, ".gitignore", ".garita/receipts/\n");
+        }
+        commit_all(r, "one");
+        let index_before = fs::read(r.join(".git/index")).unwrap();
+        let clean = g::worktree_tree(r).unwrap();
+        write(r, ".garita/receipts/x.json", "{}\n");
+        write(r, ".garita/receipts/run/lint.log", "out\n");
+        assert_eq!(g::worktree_tree(r).unwrap(), clean, "ignored: {ignored}");
+        let head = g::tree_of_commit(r, "HEAD").unwrap();
+        assert!(!g::dirty(r, &head).unwrap(), "ignored: {ignored}");
+        assert_eq!(fs::read(r.join(".git/index")).unwrap(), index_before);
+        write(r, ".garita/config.yaml", "schema_version: 1\n");
+        assert_ne!(
+            g::worktree_tree(r).unwrap(),
+            clean,
+            "other .garita files still count"
+        );
+    }
+}

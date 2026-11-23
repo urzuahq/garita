@@ -109,7 +109,7 @@
         "severity": "error"
       }
     ],
-    "next_action": "garita run lint --files src/app.ts src/util.ts",
+    "next_action": "garita run --trigger push lint --files src/app.ts src/util.ts",
     "next_action_inputs": [],
     "next_action_reason": "2 errors in 1 check",
     "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",

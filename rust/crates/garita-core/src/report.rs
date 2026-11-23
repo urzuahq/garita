@@ -241,7 +241,7 @@ impl Report {
             (RunStatus::NotRun, None) => Some(not_run_error(&checks)),
             (_, error) => error,
         };
-        let next = next_action(status, &checks, &findings);
+        let next = next_action(context.trigger, status, &checks, &findings);
         Self {
             schema_version: SCHEMA_VERSION,
             status,
@@ -312,7 +312,12 @@ fn not_run_error(checks: &[CheckEntry]) -> String {
     format!("could not run: {}", names.join(", "))
 }
 
-pub fn next_action(status: RunStatus, checks: &[CheckEntry], findings: &[Finding]) -> NextAction {
+pub fn next_action(
+    trigger: Option<Trigger>,
+    status: RunStatus,
+    checks: &[CheckEntry],
+    findings: &[Finding],
+) -> NextAction {
     match status {
         RunStatus::Pass | RunStatus::Warn => NextAction {
             action: None,
@@ -322,7 +327,7 @@ pub fn next_action(status: RunStatus, checks: &[CheckEntry], findings: &[Finding
             action: Some(DOCTOR.to_string()),
             reason: Some(not_run_reason(checks)),
         },
-        RunStatus::Fail => match failing_rerun(checks, findings) {
+        RunStatus::Fail => match failing_rerun(trigger, checks, findings) {
             Some(action) => NextAction {
                 action: Some(action),
                 reason: Some(fail_reason(checks, findings)),
@@ -379,7 +384,11 @@ fn plural(count: usize, noun: &str) -> String {
 }
 
 /// The narrowest re-run of the first failing check: the first listed check that failed or has an error.
-fn failing_rerun(checks: &[CheckEntry], findings: &[Finding]) -> Option<String> {
+fn failing_rerun(
+    trigger: Option<Trigger>,
+    checks: &[CheckEntry],
+    findings: &[Finding],
+) -> Option<String> {
     let has_error = |name: &str| {
         findings
             .iter()
@@ -395,7 +404,7 @@ fn failing_rerun(checks: &[CheckEntry], findings: &[Finding]) -> Option<String> 
                 .find(|f| f.severity == Severity::Error)
                 .map(|f| f.check.as_str())
         })?;
-    Some(rerun_command(name, &error_files(name, findings)))
+    Some(rerun_command(trigger, name, &error_files(name, findings)))
 }
 
 fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
@@ -413,10 +422,19 @@ fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
     files
 }
 
-pub fn rerun_command(check: &str, files: &[&str]) -> String {
-    let mut command = format!("garita run {}", quote(check));
+/// `garita run [--trigger <t>] <check> --files ...`; `--trigger` is left out at `commit`, the
+/// default, and a file beginning with `-` puts the files after `--`.
+pub fn rerun_command(trigger: Option<Trigger>, check: &str, files: &[&str]) -> String {
+    let mut command = "garita run ".to_string();
+    if let Some(t) = trigger.filter(|t| *t != Trigger::Commit) {
+        command.push_str(&format!("--trigger {} ", t.as_str()));
+    }
+    command.push_str(&quote(check));
     if !files.is_empty() {
         command.push_str(" --files");
+        if files.iter().any(|f| f.starts_with('-')) {
+            command.push_str(" --");
+        }
         for file in files {
             command.push(' ');
             command.push_str(&quote(file));
@@ -444,7 +462,7 @@ mod tests {
           "status": "fail",
           "duration_ms": 412,
           "examined": { "files": 38 },
-          "rerun": "garita run lint --files ts/frontend/src/App.tsx"
+          "rerun": "garita run --trigger push lint --files ts/frontend/src/App.tsx"
         }
       ],
       "findings": [
@@ -461,7 +479,7 @@ mod tests {
         }
       ],
       "examined": { "files": 38 },
-      "next_action": "garita run lint --files ts/frontend/src/App.tsx",
+      "next_action": "garita run --trigger push lint --files ts/frontend/src/App.tsx",
       "next_action_reason": "1 error in 1 check",
       "next_action_inputs": [],
       "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json"
@@ -598,7 +616,12 @@ mod tests {
     #[test]
     fn next_action_is_null_on_pass_and_warn() {
         for status in [RunStatus::Pass, RunStatus::Warn] {
-            let next = next_action(status, &[], &[finding("a", Severity::Warning, Some("x"))]);
+            let next = next_action(
+                None,
+                status,
+                &[],
+                &[finding("a", Severity::Warning, Some("x"))],
+            );
             assert_eq!(
                 next,
                 NextAction {
@@ -611,14 +634,14 @@ mod tests {
 
     #[test]
     fn next_action_is_doctor_on_not_run() {
-        let next = next_action(RunStatus::NotRun, &[], &[]);
+        let next = next_action(None, RunStatus::NotRun, &[], &[]);
         assert_eq!(next.action.as_deref(), Some(DOCTOR));
         assert_eq!(next.reason.as_deref(), Some("the run could not start"));
         let checks = [
             check("a", CheckStatus::NotRun, 0),
             check("b", CheckStatus::NotRun, 0),
         ];
-        let next = next_action(RunStatus::NotRun, &checks, &[]);
+        let next = next_action(None, RunStatus::NotRun, &checks, &[]);
         assert_eq!(next.reason.as_deref(), Some("2 checks could not run"));
     }
 
@@ -637,7 +660,7 @@ mod tests {
             finding("lint", Severity::Error, Some("b.ts")),
             finding("lint", Severity::Error, None),
         ];
-        let next = next_action(RunStatus::Fail, &checks, &f);
+        let next = next_action(None, RunStatus::Fail, &checks, &f);
         assert_eq!(
             next.action.as_deref(),
             Some("garita run lint --files b.ts 'a b.ts'")
@@ -649,7 +672,7 @@ mod tests {
     fn fail_without_files_reruns_the_whole_check() {
         let checks = [check("types", CheckStatus::Fail, 1)];
         let f = [finding("types", Severity::Error, None)];
-        let next = next_action(RunStatus::Fail, &checks, &f);
+        let next = next_action(None, RunStatus::Fail, &checks, &f);
         assert_eq!(next.action.as_deref(), Some("garita run types"));
         assert_eq!(next.reason.as_deref(), Some("1 error in 1 check"));
     }
@@ -657,13 +680,14 @@ mod tests {
     #[test]
     fn fail_from_a_finding_whose_check_is_not_listed() {
         let f = [finding("budget", Severity::Error, None)];
-        let next = next_action(RunStatus::Fail, &[], &f);
+        let next = next_action(None, RunStatus::Fail, &[], &f);
         assert_eq!(next.action.as_deref(), Some("garita run budget"));
     }
 
     #[test]
     fn fail_without_any_error_finding_has_no_action() {
         let next = next_action(
+            None,
             RunStatus::Fail,
             &[],
             &[finding("a", Severity::Warning, None)],
@@ -849,10 +873,34 @@ mod tests {
 
     #[test]
     fn rerun_command_quotes_what_needs_it() {
-        assert_eq!(rerun_command("lint", &[]), "garita run lint");
+        assert_eq!(rerun_command(None, "lint", &[]), "garita run lint");
         assert_eq!(
-            rerun_command("lint", &["a.ts", "it's.ts"]),
+            rerun_command(None, "lint", &["a.ts", "it's.ts"]),
             r"garita run lint --files a.ts 'it'\''s.ts'"
+        );
+    }
+
+    #[test]
+    fn rerun_command_names_every_trigger_but_commit() {
+        assert_eq!(
+            rerun_command(Some(Trigger::Commit), "lint", &[]),
+            "garita run lint"
+        );
+        assert_eq!(
+            rerun_command(Some(Trigger::Push), "lint", &["a.ts"]),
+            "garita run --trigger push lint --files a.ts"
+        );
+        assert_eq!(
+            rerun_command(Some(Trigger::Merge), "x", &[]),
+            "garita run --trigger merge x"
+        );
+    }
+
+    #[test]
+    fn rerun_command_ends_options_before_a_file_that_looks_like_one() {
+        assert_eq!(
+            rerun_command(None, "lint", &["a.ts", "-b.ts"]),
+            "garita run lint --files -- a.ts -b.ts"
         );
     }
 }

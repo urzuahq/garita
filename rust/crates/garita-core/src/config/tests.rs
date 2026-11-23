@@ -448,6 +448,7 @@ fn check_with(budget: Option<u64>, on: Vec<Trigger>, on_exceed: Option<OnExceed>
         exclude: Vec::new(),
         partition: None,
         via: None,
+        cwd: None,
         kind: None,
         budget: budget.map(|s| Budget {
             duration: Duration::from_secs(s),
@@ -554,7 +555,7 @@ fn an_unknown_builtin_lists_the_known_ones() {
 fn a_builtin_check_rejects_input_and_parser_keys() {
     let yaml = with_check(
         "    builtin: clean-tree\n    parser: x\n    globs: [a]\n    exclude: [b]\n    \
-         partition: { by: dir, roots: [p] }\n    via: turbo\n",
+         partition: { by: dir, roots: [p] }\n    via: turbo\n    cwd: x\n",
     );
     assert_eq!(
         paths(&yaml),
@@ -564,6 +565,7 @@ fn a_builtin_check_rejects_input_and_parser_keys() {
             "checks.c.partition",
             "checks.c.via",
             "checks.c.exclude",
+            "checks.c.cwd",
         ]
     );
 }
@@ -642,4 +644,56 @@ fn a_check_name_that_reads_as_a_flag_is_rejected() {
     }
     let ok = "schema_version: 1\nchecks:\n  clean-tree_2.x:\n    run: x\n";
     assert!(Config::parse(ok).is_ok());
+}
+
+#[test]
+fn cwd_is_a_normalised_repository_relative_directory() {
+    let c = Config::parse(&with_check("    run: x\n    cwd: ./tools//lint/\n")).unwrap();
+    assert_eq!(c.check("c").unwrap().cwd.as_deref(), Some("tools/lint"));
+    let c = Config::parse(&with_check("    run: x\n    cwd: .\n")).unwrap();
+    assert_eq!(c.check("c").unwrap().cwd, None);
+    for bad in ["/abs", "a/../b", "..", "a\\\\b"] {
+        let yaml = with_check(&format!("    run: x\n    cwd: '{bad}'\n"));
+        assert_eq!(paths(&yaml), ["checks.c.cwd"], "{bad}");
+    }
+}
+
+#[test]
+fn cwd_and_partition_do_not_combine() {
+    let yaml = with_check("    run: x\n    cwd: a\n    partition: { by: dir, roots: [p] }\n");
+    assert_eq!(paths(&yaml), ["checks.c.cwd"]);
+}
+
+#[test]
+fn via_names_turbo_only() {
+    let yaml = with_check("    run: nx run {affected}\n    via: nx\n");
+    assert_eq!(paths(&yaml), ["checks.c.via"]);
+    assert!(
+        errs(&yaml)[0]
+            .to_string()
+            .contains("the only one is `turbo`")
+    );
+}
+
+#[test]
+fn affected_needs_a_task_runner() {
+    let yaml = with_check("    run: tool {affected}\n");
+    assert_eq!(paths(&yaml), ["checks.c.run"]);
+    assert!(errs(&yaml)[0].to_string().contains("add `via: turbo`"));
+    assert!(Config::parse(&with_check("    run: turbo t {affected}\n    via: turbo\n")).is_ok());
+}
+
+#[test]
+fn the_check_name_garita_is_reserved() {
+    let found = errs("schema_version: 1\nchecks:\n  garita:\n    run: x\n");
+    assert_eq!(found.len(), 1);
+    assert!(matches!(&found[0], ConfigError::Invalid { path, .. } if path == "checks.garita"));
+    assert!(found[0].to_string().contains("reserved"));
+}
+
+#[test]
+fn the_rfc1_example_requires_the_running_version() {
+    let c = ok(RFC1_EXAMPLE);
+    let requires = c.requires.as_ref().unwrap();
+    assert_eq!(satisfies(requires, env!("CARGO_PKG_VERSION")), Ok(true));
 }

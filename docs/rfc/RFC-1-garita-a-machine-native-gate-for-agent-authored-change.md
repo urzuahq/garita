@@ -95,21 +95,29 @@ Garita runs a check's command directly, with no shell, so the exit code it recor
 A pipeline hides a failing tool behind the exit code of its last command, and a hand-written hook
 rarely sets `pipefail`. A check that needs a shell names one in its command and takes that risk
 openly. A `run` string is split into arguments by POSIX shell quoting rules, with no expansion of
-variables, globs or operators, so `sh -c "a | b"` is three arguments. A placeholder expands to one
-argument per item: `{files}` to one per file, `{affected}` to one per package. A placeholder is an
-argument on its own, quoted or not, and `#` starts no comment. A **trigger** is where it runs: `commit`, `push`, `ci`,
-`merge`. A **scope** is what it runs over:
+variables, globs or operators, so `sh -c "a | b"` is three arguments. `{files}` expands to one argument per file. `{affected}` hands the question to the task runner: it
+is valid only with `via: turbo`, and expands to `--affected` when the scope is `affected` and to
+nothing otherwise, with the base ref passed to the runner. A placeholder is an argument on its own,
+quoted or not, and `#` starts no comment.
+
+A **trigger** is where it runs: `commit`, `push`, `ci`, `merge`. A **scope** is what it runs over:
 
 | Scope | Files or packages it receives | Typical trigger |
 |---|---|---|
 | `staged` | The staged files that match the check's globs | commit |
 | `changed` | Files changed against the merge base with the target branch | push |
-| `affected` | Packages affected by the change, from the orchestrator (`turbo --affected`, cargo's workspace) | push, ci |
+| `affected` | The changed files for `{files}`; for `{affected}`, the packages the task runner computes (`turbo --affected`) | push, ci |
 | `all` | Everything | ci, merge |
 
-When a scope cannot be computed (a shallow clone, a base ref that is not here, a change to root
-configuration or a lockfile that maps to no package), garita widens to the next scope and reports a
-`scope-widened` finding at `info`. It never narrows on a guess.
+The base ref for `changed` and `affected` is `--base` when given, else the first of `origin/HEAD`,
+`origin/main`, `origin/master`, `main` and `master` that exists. When a scope cannot be computed (a
+shallow clone, no base ref, no merge base), garita widens it to `all` and reports a `scope-widened`
+finding at `info`. It never narrows on a guess.
+
+`garita run --files <paths>` replaces the trigger's scope with the files given, and
+`garita run <check>` runs the named checks whatever their `on` list says. Findings that belong to
+the run and not to a check (`scope-widened`, `partly-staged`, a trigger's `budget`) are attributed
+to `garita`, which is therefore not a name a check can take.
 
 Each check and each trigger declares a **budget**, and a budget is a gate in its own right (§4).
 
@@ -179,6 +187,9 @@ Only `schema_version` is required. The defaults that matter most:
 - A check takes one of three forms: `run` with a `parser`, `native` (RFC-2), or `builtin`. A `run`
   with no `parser` uses `exit-code`. The one builtin is `clean-tree`.
 - A check with no `on` runs at every trigger.
+- A check runs from the repository root unless it sets `cwd`, a directory inside the repository.
+  Files outside a check's `cwd` or its partition roots are left out of that check, and an
+  `outside-root` finding at `info` says so.
 - A trigger with no `scope` uses `staged` at commit, `changed` at push, and `all` at ci and merge.
 - `budgets.on_exceed` and `on_crash` are `warn`, `timeout.factor` is 10 and `receipts.keep` is 200.
 - An unknown key anywhere is an error, and every problem in a config is reported at once, each with
@@ -204,7 +215,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
   reports it at `warning`, `fail` reports it at `error`, and `demote` reports it at `warning` and moves the check to a
   later trigger.
-- **Demotion.** The later trigger is the next later one in the check's own `on` list, whatever order
+- **Demotion.** Only a check with its own budget can be demoted. The later trigger is the next later one in the check's own `on` list, whatever order
   the list is written in: a check with `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
   over-budget run reports the finding and the demotion takes effect from the next run. At each run
   garita reads the last receipt in which that check actually ran at this trigger; if that run was
@@ -246,7 +257,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
       "status": "fail",
       "duration_ms": 412,
       "examined": { "files": 38 },
-      "rerun": "garita run lint --files ts/frontend/src/App.tsx"
+      "rerun": "garita run --trigger push lint --files ts/frontend/src/App.tsx"
     }
   ],
   "findings": [
@@ -263,7 +274,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
     }
   ],
   "examined": { "files": 38 },
-  "next_action": "garita run lint --files ts/frontend/src/App.tsx",
+  "next_action": "garita run --trigger push lint --files ts/frontend/src/App.tsx",
   "next_action_reason": "1 error in 1 check",
   "next_action_inputs": [],
   "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json"
@@ -290,8 +301,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 - A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
   finding saying why) or `not-run`.
 - A finding's `severity` is `error`, `warning` or `info`.
-- `next_action` is the narrowest command that re-runs what failed: the failing check, on the failing
-  files or package. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+- `next_action` is the narrowest command that re-runs what failed: the failing check, at the same
+  trigger, on the failing files. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
   `next_action_reason` says why, and `next_action_inputs` lists any placeholders, each as urzua
   prints them: the placeholder, the flag it belongs to and what to put there.
 - `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),

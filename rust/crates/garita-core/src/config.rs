@@ -14,6 +14,7 @@ use crate::argv::Command;
 use crate::report::{CheckKind, ScopeKind, Trigger};
 
 pub use duration::{DurationError, parse_duration};
+pub const VIA_TURBO: &str = parse::VIA_TURBO;
 pub use version::{Op, Version, VersionError, VersionReq, satisfies};
 
 pub const CONFIG_SCHEMA_VERSION: u64 = 1;
@@ -182,6 +183,8 @@ pub struct Check {
     pub exclude: Vec<String>,
     pub partition: Option<Partition>,
     pub via: Option<String>,
+    /// Repository-relative, normalised, never empty or `.` (that is `None`).
+    pub cwd: Option<String>,
     pub kind: Option<CheckKind>,
     pub budget: Option<Budget>,
     pub on_exceed: Option<OnExceed>,
