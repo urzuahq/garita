@@ -112,7 +112,7 @@ checks:
   path as well as its new one, so moving a file out of a critical directory is a critical change.
 - **The policy is read from the merge base.** A change cannot lower its own class: the `risk` section
   that judges a change is the one on the target branch, and so is the definition of every check a
-  class requires (its command, system, threshold and triggers). Otherwise a change could keep its
+  class requires: its whole entry, and the top-level keys it inherits. Otherwise a change could keep its
   class and replace the reviewer with a command that always passes. `.garita/config.yaml` is matched
   to the highest declared class by construction.
 - **A class needs a check to satisfy it.** A class that requires a system for which no check is

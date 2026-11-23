@@ -133,6 +133,8 @@ stdout, exit codes 0, 1 and 2, a `status`, `blocking`, typed `findings`, an `exa
   `contract_version` with its own. A different major makes the check `not-run`, with a finding that
   names both versions. Garita never guesses at a report it does not understand. Unknown keys from a
   newer minor are ignored.
+- **A native tool that exits 2 could not run.** The check is `not-run`, the same as a tool that
+  cannot be started, and so is the garita run (RFC-1 §5). It is not a crash.
 - **urzua is the first native tool.** The contract is written from its report: the exit codes,
   `status`, `blocking`, `findings`, and `next_action` with its reason and inputs, each input an
   object naming the placeholder, its flag and what to put there. What urzua lacks is the `describe`

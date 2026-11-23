@@ -180,8 +180,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 
 - **Budget findings.** A check or trigger that runs over its budget produces a `budget` finding, with
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
-  reports it at `warning`, `fail` reports it at `error`, and `demote` moves the check to a later
-  trigger.
+  reports it at `warning`, `fail` reports it at `error`, and `demote` reports it at `warning` and moves the check to a
+  later trigger.
 - **Demotion.** The later trigger is the next one in the check's own `on` list: a check with
   `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
   over-budget run reports the finding and the demotion takes effect from the next run. At each run
@@ -243,7 +243,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   "next_action": "garita run lint --files ts/frontend/src/App.tsx",
   "next_action_reason": "1 error in 1 check",
   "next_action_inputs": [],
-  "receipt": ".garita/receipts/20261121T031502Z-push-7f3a9c.json"
+  "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json"
 }
 ```
 
@@ -256,7 +256,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   reports need. The top-level `examined` is the total across checks.
 - **When outcomes mix, `not-run` wins.** If any check could not start, the run is `not-run`, exit 2
   and `blocking` false, whatever else failed, because a gate that did not fully run has no verdict.
-  Otherwise any finding at `error` makes it `fail`. Every finding is still listed.
+  Otherwise any finding at `error` makes it `fail`, any finding at `warning` makes it `warn`, and a
+  run with neither is `pass`. Every finding is still listed.
 - A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
   finding saying why) or `not-run`.
 - A finding's `severity` is `error`, `warning` or `info`.
@@ -342,7 +343,8 @@ the repository.
 A receipt is named for when it ran, `<UTC timestamp>-<trigger>-<run id>.json`, never for the commit.
 At the commit trigger no commit exists yet, and a second run must not overwrite the first: the runs
 are the history that budgets and demotion read. The tree hash, and the commit when there is one, are
-fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones.
+fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones, except the
+last receipt in which each check ran at each trigger, which demotion reads (§4).
 
 Each check's entry records the exact command, its exit code and its times, so a receipt can be cited
 as evidence of what ran. `worktree` lets a reader tell exactly whether a check ran after the last
