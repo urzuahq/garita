@@ -93,7 +93,8 @@ A pipeline hides a failing tool behind the exit code of its last command, and a 
 rarely sets `pipefail`. A check that needs a shell names one in its command and takes that risk
 openly. A `run` string is split into arguments by POSIX shell quoting rules, with no expansion of
 variables, globs or operators, so `sh -c "a | b"` is three arguments. A placeholder expands to one
-argument per item: `{files}` to one per file, `{affected}` to one per package. A **trigger** is where it runs: `commit`, `push`, `ci`,
+argument per item: `{files}` to one per file, `{affected}` to one per package. A placeholder is an
+argument on its own, quoted or not, and `#` starts no comment. A **trigger** is where it runs: `commit`, `push`, `ci`,
 `merge`. A **scope** is what it runs over:
 
 | Scope | Files or packages it receives | Typical trigger |
@@ -200,8 +201,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
   reports it at `warning`, `fail` reports it at `error`, and `demote` reports it at `warning` and moves the check to a
   later trigger.
-- **Demotion.** The later trigger is the next one in the check's own `on` list: a check with
-  `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
+- **Demotion.** The later trigger is the next later one in the check's own `on` list, whatever order
+  the list is written in: a check with `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
   over-budget run reports the finding and the demotion takes effect from the next run. At each run
   garita reads the last receipt in which that check actually ran at this trigger; if that run was
   over budget, the check is skipped here with a `demoted` finding at `info`. It stays demoted,
@@ -275,8 +276,10 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   reports need. The top-level `examined` is the total across checks.
 - **When outcomes mix, `not-run` wins.** If any check could not start, the run is `not-run`, exit 2
   and `blocking` false, whatever else failed, because a gate that did not fully run has no verdict.
-  Otherwise any finding at `error` makes it `fail`, any finding at `warning` makes it `warn`, and a
-  run with neither is `pass`. Every finding is still listed.
+  Otherwise a failed check or any finding at `error` makes it `fail`, a check that warned or any
+  finding at `warning` makes it `warn`, and a run with neither is `pass`. A check's own status
+  counts even when it produced no finding, so a tool that failed without saying why still blocks.
+  Every finding is still listed.
 - **A `not-run` report has the same keys as any other.** It always prints `blocking` (false),
   `findings` and `examined`, empty when nothing ran, plus an `error` saying why. The contract lets a
   tool leave those three out when it could not run; garita prints them so a reader never has to

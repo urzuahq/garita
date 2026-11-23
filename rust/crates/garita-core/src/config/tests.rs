@@ -380,7 +380,7 @@ fn check_fields_parse() {
         check.budget.map(|b| b.duration),
         Some(Duration::from_millis(500))
     );
-    assert_eq!(check.on, [Trigger::Ci, Trigger::Commit]);
+    assert_eq!(check.on, [Trigger::Commit, Trigger::Ci]);
     assert!(check.globs.is_empty());
 }
 
@@ -501,7 +501,7 @@ fn next_trigger_follows_the_checks_own_on_list() {
     let check = check_with(None, vec![Trigger::Commit, Trigger::Ci], None);
     assert_eq!(check.next_trigger(Trigger::Commit), Some(Trigger::Ci));
     assert_eq!(check.next_trigger(Trigger::Ci), None);
-    assert_eq!(check.next_trigger(Trigger::Push), None);
+    assert_eq!(check.next_trigger(Trigger::Push), Some(Trigger::Ci));
 }
 
 #[test]
@@ -580,4 +580,49 @@ fn only_one_form_may_be_declared() {
         )),
         ["checks.c"]
     );
+}
+
+#[test]
+fn on_is_stored_in_trigger_order_and_demotes_only_later() {
+    let c = ok(&with_check("    run: x\n    on: [merge, ci, commit]\n"));
+    let check = &c.checks[0];
+    assert_eq!(check.on, [Trigger::Commit, Trigger::Ci, Trigger::Merge]);
+    assert_eq!(check.next_trigger(Trigger::Commit), Some(Trigger::Ci));
+    assert_eq!(check.next_trigger(Trigger::Ci), Some(Trigger::Merge));
+    assert_eq!(check.next_trigger(Trigger::Push), Some(Trigger::Ci));
+    assert_eq!(check.next_trigger(Trigger::Merge), None);
+    let reversed = ok(&with_check("    run: x\n    on: [ci, commit]\n"));
+    assert_eq!(reversed.checks[0].next_trigger(Trigger::Ci), None);
+}
+
+#[test]
+fn a_zero_duration_is_rejected_in_a_config() {
+    let found = errs(&with_check("    run: x\n    budget: { duration: 0s }\n"));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path(), "checks.c.budget.duration");
+    assert!(found[0].to_string().contains("greater than zero"));
+    assert_eq!(
+        paths("schema_version: 1\ntriggers: { ci: { budget: { duration: 0ms } } }\n"),
+        ["triggers.ci.budget.duration"]
+    );
+}
+
+#[test]
+fn yaml_tags_are_rejected_at_their_path() {
+    let found = errs(&with_check("    run: !foo x\n"));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path(), "checks.c.run");
+    assert!(found[0].to_string().contains("!foo"), "{}", found[0]);
+    assert_eq!(
+        paths("schema_version: 1\nchecks:\n  c:\n    run: x\n    on: [ci, !t push]\n"),
+        ["checks.c.on[1]"]
+    );
+    assert_eq!(paths("schema_version: !v 1\n"), ["schema_version"]);
+}
+
+#[test]
+fn anchors_and_aliases_are_accepted() {
+    let c = ok("schema_version: 1\nchecks:\n  a: &base\n    run: x\n    on: [ci]\n  b: *base\n");
+    assert_eq!(c.checks.len(), 2);
+    assert_eq!(c.checks[1].on, [Trigger::Ci]);
 }

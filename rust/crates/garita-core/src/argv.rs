@@ -380,6 +380,19 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_or_escaped_placeholder_is_still_a_placeholder() {
+        for run in ["x '{files}'", "x \"{files}\"", r"x \{files\}"] {
+            let cmd = Command::parse(run).unwrap();
+            assert_eq!(cmd.placeholders(), [Placeholder::Files], "{run}");
+        }
+    }
+
+    #[test]
+    fn a_hash_is_not_a_comment() {
+        assert_eq!(s("a #b"), ["a", "#b"]);
+    }
+
+    #[test]
     fn an_empty_command_is_an_error() {
         assert_eq!(Command::parse("  "), Err(ArgvError::Empty));
     }

@@ -5,9 +5,9 @@ use yaml_serde::{Mapping, Value};
 
 use super::{
     Budget, Budgets, Builtin, CONFIG_SCHEMA_VERSION, Check, CheckForm, Config, ConfigError,
-    ConfigErrors, DEFAULT_PARSER, DEFAULT_RECEIPTS_KEEP, DEFAULT_TIMEOUT_FACTOR, EvidenceAccept,
-    MergeConfig, MergeMode, OnCrash, OnExceed, Partition, Regression, TriggerConfig, VersionReq,
-    Worktree, parse_duration,
+    ConfigErrors, DEFAULT_PARSER, DEFAULT_RECEIPTS_KEEP, DEFAULT_TIMEOUT_FACTOR, DurationError,
+    EvidenceAccept, MergeConfig, MergeMode, OnCrash, OnExceed, Partition, Regression,
+    TriggerConfig, VersionReq, Worktree, parse_duration,
 };
 use crate::argv::Command;
 use crate::report::{CheckKind, ScopeKind, Trigger};
@@ -53,6 +53,7 @@ pub(super) fn parse(yaml: &str) -> Result<Config, ConfigErrors> {
         }])
     })?;
     let mut w = Walker::default();
+    w.reject_tags(&root, "");
     let config = w.config(&root);
     match config {
         Some(config) if w.errors.is_empty() => Ok(config),
@@ -120,6 +121,39 @@ impl Walker {
         out
     }
 
+    /// Accessors read through a tag, so a tag anywhere would otherwise be silently dropped.
+    fn reject_tags(&mut self, value: &Value, path: &str) {
+        match value {
+            Value::Tagged(tagged) => {
+                let at = if path.is_empty() {
+                    "(the document)"
+                } else {
+                    path
+                };
+                self.invalid(
+                    at,
+                    format!(
+                        "YAML tags such as `{}` are not allowed; remove it",
+                        tagged.tag
+                    ),
+                );
+            }
+            Value::Sequence(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    self.reject_tags(item, &format!("{path}[{i}]"));
+                }
+            }
+            Value::Mapping(map) => {
+                for (key, v) in map {
+                    let name = key.as_str().map_or_else(|| "?".to_string(), str::to_string);
+                    self.reject_tags(key, &join(path, &name));
+                    self.reject_tags(v, &join(path, &name));
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
     fn mapping<'a>(&mut self, value: &'a Value, path: &str) -> Option<&'a Mapping> {
         let map = value.as_mapping();
         if map.is_none() {
@@ -181,11 +215,17 @@ impl Walker {
     }
 
     fn duration(&mut self, value: &Value, path: &str) -> Option<Duration> {
-        let parsed = value.as_str().and_then(parse_duration);
-        if parsed.is_none() {
-            self.wrong_type(path, "a duration such as 500ms, 3s, 10m or 1h");
+        match value.as_str().map(parse_duration) {
+            Some(Ok(d)) => Some(d),
+            Some(Err(DurationError::Zero)) => {
+                self.invalid(path, DurationError::Zero.to_string());
+                None
+            }
+            Some(Err(DurationError::Format)) | None => {
+                self.wrong_type(path, "a duration such as 500ms, 3s, 10m or 1h");
+                None
+            }
         }
-        parsed
     }
 
     fn budget(&mut self, value: &Value, path: &str) -> Option<Budget> {
@@ -609,6 +649,7 @@ impl Walker {
                 None => ok = false,
             }
         }
+        on.sort();
         ok.then_some(on)
     }
 }

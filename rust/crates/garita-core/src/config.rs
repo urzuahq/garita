@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::argv::Command;
 use crate::report::{CheckKind, ScopeKind, Trigger};
 
-pub use duration::parse_duration;
+pub use duration::{DurationError, parse_duration};
 pub use version::{Op, Version, VersionError, VersionReq, satisfies};
 
 pub const CONFIG_SCHEMA_VERSION: u64 = 1;
@@ -185,15 +185,15 @@ pub struct Check {
     pub kind: Option<CheckKind>,
     pub budget: Option<Budget>,
     pub on_exceed: Option<OnExceed>,
+    /// Sorted in trigger order (commit, push, ci, merge), whatever order the config lists.
     pub on: Vec<Trigger>,
     pub advisory: bool,
 }
 
 impl Check {
-    /// The trigger a check demotes to from `from`: the next one in its own `on` list.
+    /// The trigger a check demotes to from `from`: the next later one in its own `on` list.
     pub fn next_trigger(&self, from: Trigger) -> Option<Trigger> {
-        let at = self.on.iter().position(|t| *t == from)?;
-        self.on.get(at + 1).copied()
+        self.on.iter().copied().find(|t| *t > from)
     }
 }
 

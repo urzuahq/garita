@@ -1,21 +1,38 @@
 use std::time::Duration;
 
-/// Parses `500ms`, `3s`, `10m` or `1h`: a whole number and one unit, nothing else.
-pub fn parse_duration(text: &str) -> Option<Duration> {
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum DurationError {
+    #[error("expected a duration such as 500ms, 3s, 10m or 1h")]
+    Format,
+    #[error("a duration must be greater than zero")]
+    Zero,
+}
+
+/// Parses `500ms`, `3s`, `10m` or `1h`: a whole number above zero and one unit, nothing else.
+pub fn parse_duration(text: &str) -> Result<Duration, DurationError> {
+    match millis(text) {
+        Some(0) => Err(DurationError::Zero),
+        Some(n) => Ok(Duration::from_millis(n)),
+        None => Err(DurationError::Format),
+    }
+}
+
+fn millis(text: &str) -> Option<u64> {
     let split = text.find(|c: char| !c.is_ascii_digit())?;
     let (digits, unit) = text.split_at(split);
     if digits.is_empty() {
         return None;
     }
     let n: u64 = digits.parse().ok()?;
-    let millis = match unit {
+    match unit {
         "ms" => Some(n),
         "s" => n.checked_mul(1_000),
         "m" => n.checked_mul(60_000),
         "h" => n.checked_mul(3_600_000),
         _ => None,
-    }?;
-    Some(Duration::from_millis(millis))
+    }
 }
 
 #[cfg(test)]
@@ -24,11 +41,21 @@ mod tests {
 
     #[test]
     fn parses_each_unit() {
-        assert_eq!(parse_duration("500ms"), Some(Duration::from_millis(500)));
-        assert_eq!(parse_duration("3s"), Some(Duration::from_secs(3)));
-        assert_eq!(parse_duration("10m"), Some(Duration::from_secs(600)));
-        assert_eq!(parse_duration("1h"), Some(Duration::from_secs(3600)));
-        assert_eq!(parse_duration("0s"), Some(Duration::ZERO));
+        assert_eq!(parse_duration("500ms"), Ok(Duration::from_millis(500)));
+        assert_eq!(parse_duration("3s"), Ok(Duration::from_secs(3)));
+        assert_eq!(parse_duration("10m"), Ok(Duration::from_secs(600)));
+        assert_eq!(parse_duration("1h"), Ok(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn rejects_a_zero_duration_in_any_unit() {
+        for zero in ["0s", "0ms", "00m", "0h"] {
+            assert_eq!(parse_duration(zero), Err(DurationError::Zero), "{zero}");
+        }
+        assert_eq!(
+            DurationError::Zero.to_string(),
+            "a duration must be greater than zero"
+        );
     }
 
     #[test]
@@ -51,7 +78,7 @@ mod tests {
             "99999999999999999999s",
             "18446744073709551615h",
         ] {
-            assert_eq!(parse_duration(bad), None, "{bad}");
+            assert_eq!(parse_duration(bad), Err(DurationError::Format), "{bad}");
         }
     }
 }

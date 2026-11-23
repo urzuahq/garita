@@ -1,6 +1,7 @@
 //! The verdict garita prints (RFC-1 §5).
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 
@@ -165,8 +166,8 @@ pub struct Finding {
     pub severity: Severity,
     pub rule: String,
     pub file: Option<String>,
-    pub line: Option<u64>,
-    pub column: Option<u64>,
+    pub line: Option<NonZeroU64>,
+    pub column: Option<NonZeroU64>,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
@@ -274,13 +275,21 @@ impl Report {
 pub fn run_status(checks: &[CheckEntry], findings: &[Finding], could_not_start: bool) -> RunStatus {
     if could_not_start || checks.iter().any(|c| c.status == CheckStatus::NotRun) {
         RunStatus::NotRun
-    } else if findings.iter().any(|f| f.severity == Severity::Error) {
+    } else if any_status(checks, CheckStatus::Fail) || any_severity(findings, Severity::Error) {
         RunStatus::Fail
-    } else if findings.iter().any(|f| f.severity == Severity::Warning) {
+    } else if any_status(checks, CheckStatus::Warn) || any_severity(findings, Severity::Warning) {
         RunStatus::Warn
     } else {
         RunStatus::Pass
     }
+}
+
+fn any_status(checks: &[CheckEntry], status: CheckStatus) -> bool {
+    checks.iter().any(|c| c.status == status)
+}
+
+fn any_severity(findings: &[Finding], severity: Severity) -> bool {
+    findings.iter().any(|f| f.severity == severity)
 }
 
 pub fn total_examined(checks: &[CheckEntry]) -> Examined {
@@ -316,7 +325,7 @@ pub fn next_action(status: RunStatus, checks: &[CheckEntry], findings: &[Finding
         RunStatus::Fail => match failing_rerun(checks, findings) {
             Some(action) => NextAction {
                 action: Some(action),
-                reason: Some(fail_reason(findings)),
+                reason: Some(fail_reason(checks, findings)),
             },
             None => NextAction {
                 action: None,
@@ -338,19 +347,26 @@ fn not_run_reason(checks: &[CheckEntry]) -> String {
     }
 }
 
-fn fail_reason(findings: &[Finding]) -> String {
-    let mut checks: Vec<&str> = Vec::new();
+fn fail_reason(checks: &[CheckEntry], findings: &[Finding]) -> String {
+    let mut names: Vec<&str> = Vec::new();
     let mut errors = 0;
     for f in findings.iter().filter(|f| f.severity == Severity::Error) {
         errors += 1;
-        if !checks.contains(&f.check.as_str()) {
-            checks.push(&f.check);
+        if !names.contains(&f.check.as_str()) {
+            names.push(&f.check);
         }
+    }
+    if errors == 0 {
+        let failed = checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Fail)
+            .count();
+        return format!("{} failed", plural(failed, "check"));
     }
     format!(
         "{} in {}",
         plural(errors, "error"),
-        plural(checks.len(), "check")
+        plural(names.len(), "check")
     )
 }
 
@@ -362,7 +378,7 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
-/// The narrowest re-run of the first failing check: the first listed check with an error finding.
+/// The narrowest re-run of the first failing check: the first listed check that failed or has an error.
 fn failing_rerun(checks: &[CheckEntry], findings: &[Finding]) -> Option<String> {
     let has_error = |name: &str| {
         findings
@@ -371,8 +387,8 @@ fn failing_rerun(checks: &[CheckEntry], findings: &[Finding]) -> Option<String> 
     };
     let name = checks
         .iter()
+        .find(|c| c.status == CheckStatus::Fail || has_error(&c.name))
         .map(|c| c.name.as_str())
-        .find(|n| has_error(n))
         .or_else(|| {
             findings
                 .iter()
@@ -659,6 +675,91 @@ mod tests {
                 reason: None
             }
         );
+    }
+
+    fn verdict(checks: Vec<CheckEntry>, findings: Vec<Finding>) -> Report {
+        Report::from_run(RunContext::default(), checks, findings, None)
+    }
+
+    #[test]
+    fn a_failed_check_with_no_findings_fails() {
+        let r = verdict(vec![check("types", CheckStatus::Fail, 1)], Vec::new());
+        assert_eq!(
+            (r.status, r.blocking, r.exit_code()),
+            (RunStatus::Fail, true, 1)
+        );
+        assert_eq!(r.next_action.as_deref(), Some("garita run types"));
+        assert_eq!(r.next_action_reason.as_deref(), Some("1 check failed"));
+    }
+
+    #[test]
+    fn a_warned_check_with_no_findings_warns() {
+        let r = verdict(vec![check("a", CheckStatus::Warn, 1)], Vec::new());
+        assert_eq!(
+            (r.status, r.blocking, r.exit_code()),
+            (RunStatus::Warn, false, 0)
+        );
+        assert_eq!((r.next_action, r.next_action_reason), (None, None));
+    }
+
+    #[test]
+    fn a_failed_check_with_only_warnings_fails_and_reruns_it() {
+        let checks = vec![
+            check("a", CheckStatus::Pass, 1),
+            check("b", CheckStatus::Fail, 1),
+            check("c", CheckStatus::Fail, 1),
+        ];
+        let r = verdict(checks, vec![finding("b", Severity::Warning, Some("w.ts"))]);
+        assert_eq!(r.status, RunStatus::Fail);
+        assert_eq!(r.next_action.as_deref(), Some("garita run b"));
+        assert_eq!(r.next_action_reason.as_deref(), Some("2 checks failed"));
+    }
+
+    #[test]
+    fn a_failed_check_listed_before_an_error_check_is_rerun_first() {
+        let checks = vec![
+            check("a", CheckStatus::Fail, 1),
+            check("b", CheckStatus::Fail, 1),
+        ];
+        let r = verdict(checks, vec![finding("b", Severity::Error, Some("x.ts"))]);
+        assert_eq!(r.next_action.as_deref(), Some("garita run a"));
+        assert_eq!(r.next_action_reason.as_deref(), Some("1 error in 1 check"));
+    }
+
+    #[test]
+    fn skipped_checks_only_pass() {
+        let checks = vec![
+            check("a", CheckStatus::Skipped, 0),
+            check("b", CheckStatus::Skipped, 0),
+        ];
+        let r = verdict(checks, vec![finding("a", Severity::Info, None)]);
+        assert_eq!((r.status, r.exit_code()), (RunStatus::Pass, 0));
+        assert_eq!((r.next_action, r.next_action_reason), (None, None));
+    }
+
+    #[test]
+    fn info_findings_only_pass() {
+        let checks = vec![check("a", CheckStatus::Pass, 1)];
+        let r = verdict(checks, vec![finding("a", Severity::Info, Some("x"))]);
+        assert_eq!(
+            (r.status, r.blocking, r.exit_code()),
+            (RunStatus::Pass, false, 0)
+        );
+        assert_eq!((r.next_action, r.next_action_reason), (None, None));
+    }
+
+    #[test]
+    fn finding_line_and_column_reject_zero() {
+        let base = serde_json::json!({
+            "check": "a", "severity": "error", "rule": "r", "file": null,
+            "line": 1, "column": 1, "message": "m"
+        });
+        assert!(serde_json::from_value::<Finding>(base.clone()).is_ok());
+        for key in ["line", "column"] {
+            let mut bad = base.clone();
+            bad[key] = serde_json::json!(0);
+            assert!(serde_json::from_value::<Finding>(bad).is_err(), "{key}");
+        }
     }
 
     #[test]
