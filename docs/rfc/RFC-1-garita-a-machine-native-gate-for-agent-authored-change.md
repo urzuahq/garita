@@ -69,8 +69,8 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
   class requires it (RFC-3), and garita's own part stays deterministic: it checks that the verdict
   exists, is pinned to the tree and says pass.
 - **Fail closed on garita, fail open on infrastructure.** A broken garita install or config blocks, and
-  so does a tool that cannot be started (a missing binary, a command that does not resolve): `not-run`,
-  exit 2.
+  so does a tool that cannot be started (a missing binary, a command that does not resolve) or a
+  native tool that reports it could not run (RFC-2): `not-run`, exit 2.
   A tool that started and then crashed or timed out is a `crash` finding at `warning`, never a
   silent pass; `on_crash: fail` makes it block.
 - **A missing config is not a pass.** With no `.garita/config.yaml`, `garita run` is `not-run`, exit
@@ -91,7 +91,9 @@ reader needs to know what a pass proves: a passing lint does not verify a claim 
 Garita runs a check's command directly, with no shell, so the exit code it records is the tool's own.
 A pipeline hides a failing tool behind the exit code of its last command, and a hand-written hook
 rarely sets `pipefail`. A check that needs a shell names one in its command and takes that risk
-openly. A **trigger** is where it runs: `commit`, `push`, `ci`,
+openly. A `run` string is split into arguments by POSIX shell quoting rules, with no expansion of
+variables, globs or operators, so `sh -c "a | b"` is three arguments. A placeholder expands to one
+argument per item: `{files}` to one per file, `{affected}` to one per package. A **trigger** is where it runs: `commit`, `push`, `ci`,
 `merge`. A **scope** is what it runs over:
 
 | Scope | Files or packages it receives | Typical trigger |
@@ -227,6 +229,7 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   "checks": [
     {
       "name": "lint",
+      "kind": "lint",
       "status": "fail",
       "duration_ms": 412,
       "examined": { "files": 38 },
