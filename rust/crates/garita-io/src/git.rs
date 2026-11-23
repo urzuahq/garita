@@ -352,6 +352,10 @@ pub fn tree_of_index(root: &Path) -> Result<ObjectId, GitError> {
 
 /// A tree of the working files as they are: tracked files with their current content plus
 /// untracked files that are not ignored. Neither the index nor the working tree is touched.
+///
+/// It does write to the object database: git stores a loose object for each changed or untracked
+/// file it hashes, and runs that file's clean filter. Uncommitted changes inside a submodule are
+/// not seen, since a submodule is recorded by its commit.
 pub fn worktree_tree(root: &Path) -> Result<ObjectId, GitError> {
     let temp = TempIndex::seeded(root)?;
     let mut add = temp.command(root);
