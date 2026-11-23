@@ -170,3 +170,20 @@ fn a_slow_passing_check_is_still_demoted() {
     assert_eq!(check(&second.report, "slow").status, CheckStatus::Skipped);
     assert!(rules(&second.report, "slow").contains(&"demoted"));
 }
+
+#[test]
+fn a_check_that_timed_out_is_not_demoted_and_runs_again() {
+    let repo = Repo::new();
+    sleeper(
+        &repo,
+        "    budget: { duration: 100ms }\n    on: [commit, ci]\n    on_exceed: demote\n",
+        "timeout: { factor: 2 }\n",
+    );
+    set_delay(&repo, "5");
+    let first = repo.run();
+    assert!(rules(&first.report, "slow").contains(&"crash"));
+    let second = repo.run();
+    assert_ne!(check(&second.report, "slow").status, CheckStatus::Skipped);
+    assert!(rules(&second.report, "slow").contains(&"crash"));
+    assert!(!rules(&second.report, "slow").contains(&"demoted"));
+}

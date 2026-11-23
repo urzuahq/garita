@@ -110,8 +110,11 @@ A **trigger** is where it runs: `commit`, `push`, `ci`, `merge`. A **scope** is 
 | `all` | Everything | ci, merge |
 
 The base ref for `changed` and `affected` is `--base` when given, else the first of `origin/HEAD`,
-`origin/main`, `origin/master`, `main` and `master` that exists and is not the branch being checked.
-A branch compared with itself has no changes, so it would pass anything. When a scope cannot be
+`origin/main`, `origin/master`, `main` and `master` that exists. A local branch is passed over when
+it is the branch being checked or sits at the same commit, since a branch compared with itself has
+no changes and would pass anything. A remote branch at the same commit is used: nothing is ahead of
+the remote. A `--base` given by hand is used as it is, with a `base-is-head` finding at `info` when
+it names the commit being checked. When a scope cannot be
 computed (a shallow clone, no base ref, no merge base), garita widens it to `all` and reports a
 `scope-widened` finding at `info`. It never narrows on a guess.
 
@@ -220,9 +223,9 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
   reports it at `warning`, `fail` reports it at `error`, and `demote` reports it at `warning` and moves the check to a
   later trigger.
-- **Demotion.** Only a check with its own budget can be demoted, and only one that passed: a check
-  that failed runs again at the same trigger however slow it was, so being slow never releases a
-  failing check. The later trigger is the next later one in the check's own `on` list, whatever order
+- **Demotion.** Only a check with its own budget can be demoted, and only one whose tool exited on
+  its own and passed or warned. A check that failed, or whose tool was killed at its timeout, runs
+  again at the same trigger however slow it was, so being slow or hanging never releases a check. The later trigger is the next later one in the check's own `on` list, whatever order
   the list is written in: a check with `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
   over-budget run reports the finding and the demotion takes effect from the next run. At each run
   garita reads the last receipt in which that check actually ran at this trigger; if that run was

@@ -73,8 +73,9 @@ fn supported(check: &Check) -> Pick<'_> {
     }
 }
 
-/// The `demoted` finding when the last run of `check` at `trigger` went over its budget and
-/// still passed or warned; a check that failed or could not run keeps gating here.
+/// The `demoted` finding when the last run of `check` at `trigger` went over its budget, exited
+/// on its own and passed or warned; a check that failed, was killed or could not run keeps
+/// gating here, so a tool that hangs is never skipped for hanging.
 fn demoted(config: &Config, check: &Check, trigger: Trigger, history: &Listing) -> Option<Finding> {
     if config.on_exceed(check) != OnExceed::Demote {
         return None;
@@ -84,7 +85,8 @@ fn demoted(config: &Config, check: &Check, trigger: Trigger, history: &Listing) 
     let last = history.last_run_of(&check.name, trigger)?;
     let entry = last.receipt.checks.iter().find(|c| c.name == check.name)?;
     let took = Duration::from_millis(entry.duration_ms);
-    let gated = matches!(entry.status, CheckStatus::Pass | CheckStatus::Warn);
+    let gated =
+        matches!(entry.status, CheckStatus::Pass | CheckStatus::Warn) && entry.exit_code.is_some();
     (gated && took > budget).then(|| {
         let message = format!(
             "demoted to {}: its last run at {} took {}, over its budget of {}; \
