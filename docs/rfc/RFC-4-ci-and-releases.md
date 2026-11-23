@@ -40,6 +40,16 @@ It needs every other job and fails unless each succeeded; a job that was skipped
 reported counts as failed, except a job that is meant to be skipped off pull requests. `ci` is the
 only check branch protection requires.
 
+A commit must end with one verdict. Two runs can start for the same commit: the release tool pushes
+the release branch and then labels its pull request, and a person can label a pull request while its
+checks run. If the later run cancelled the earlier one, the cancelled run's `ci` job would still
+report, as a failure, and could be the last word on a commit whose other run is green; the ruleset
+then refuses a merge that should be allowed. A gate job cannot abstain: any conclusion it gives for
+a superseded run is either a false block or a pass before the real answer. So runs are not
+cancelled on the same commit. Only a new commit cancels a run in progress, and that failure lands
+on the old commit. Any other event waits behind the run in progress, which makes the run for the
+latest event the last to report. Editing a pull request's title or description starts no run.
+
 The checks themselves live in a reusable workflow, `checks.yml`, so that publishing a release can
 run exactly the same checks on the commit it ships (section 4): format, lint, unused dependencies
 and dependency policy, build, tests, and the contract check that validates garita's output against
