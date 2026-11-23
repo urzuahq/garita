@@ -303,9 +303,15 @@ the repository.
 A receipt is named for when it ran, `<UTC timestamp>-<trigger>-<run id>.json`, never for the commit.
 At the commit trigger no commit exists yet, and a second run must not overwrite the first: the runs
 are the history that budgets and demotion read. The tree hash, and the commit when there is one, are
-fields inside. Each check's entry records the exact command, its scope and whether the working tree
-was dirty, so a receipt can be cited as evidence of what ran. Garita keeps the last `receipts.keep`
-receipts and deletes older ones.
+fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones.
+
+Each check's entry records the exact command, its scope, its exit code, and when it started and
+finished, so a receipt can be cited as evidence of what ran. The receipt also records what the checks
+actually saw: `worktree`, a tree hash computed from the working files, beside `tree` (the index's
+tree at the commit trigger, the commit's tree elsewhere) and `dirty`. A reader can then tell exactly
+whether a check ran after the last edit: it did if the working files still hash to the receipt's
+`worktree`. That answer does not depend on comparing clocks, and it is the one decision-agent-kit's
+stop check needs (§9).
 
 A receipt's `result` uses the words of the in-toto test-result predicate (`PASSED`, `WARNED`,
 `FAILED`) and names the tree as its subject, so wrapping a receipt in a signed statement later adds
