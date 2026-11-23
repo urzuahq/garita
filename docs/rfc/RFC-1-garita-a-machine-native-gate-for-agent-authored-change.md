@@ -258,6 +258,10 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   and `blocking` false, whatever else failed, because a gate that did not fully run has no verdict.
   Otherwise any finding at `error` makes it `fail`, any finding at `warning` makes it `warn`, and a
   run with neither is `pass`. Every finding is still listed.
+- **A `not-run` report has the same keys as any other.** It always prints `blocking` (false),
+  `findings` and `examined`, empty when nothing ran, plus an `error` saying why. The contract lets a
+  tool leave those three out when it could not run; garita prints them so a reader never has to
+  branch on whether they exist.
 - A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
   finding saying why) or `not-run`.
 - A finding's `severity` is `error`, `warning` or `info`.
