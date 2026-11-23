@@ -457,8 +457,9 @@ Receipts are what make budgets work (ยง4) and what make the ecosystem compose (ย
 ### 11. Language and packaging
 
 Rust, as a single binary, matching urzua: no runtime on the machine, parallel checks, fast start for a
-hook that runs on every commit. Distributed through crates.io, prebuilt binaries for macOS (arm64 and
-x64) and Linux (x64 and arm64), and an npm wrapper for JavaScript repositories.
+hook that runs on every commit. Distributed as prebuilt binaries on GitHub releases (RFC-4), first for
+Linux x64 and macOS on Apple Silicon. Publishing to crates.io and an npm wrapper for JavaScript
+repositories waits on a decision for the whole organisation.
 
 ### 12. Phases
 

@@ -1,0 +1,65 @@
+[package]
+# Anchored to the start of a line so it matches only `[workspace.package]`'s
+# own version, not `rust-version` or the `version = "1"` inside a dependency.
+versioned_files = [
+    { path = "rust/Cargo.toml", regex = '(?m)^version = "(?<version>[^"]+)"$' },
+]
+changelog = "CHANGELOG.md"
+
+[changes]
+ignore_conventional_commits = true
+
+[github]
+owner = "urzuahq"
+repo = "garita"
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+# Changesets are the only release trigger; a commit message cannot say which
+# tree changed.
+[[workflows.steps]]
+type = "PrepareRelease"
+
+# PrepareRelease bumps only the manifest's version line, so the lockfile's
+# workspace member versions go stale. Not --locked: it is stale by construction.
+[[workflows.steps]]
+type = "Command"
+command = "cargo check --manifest-path rust/Cargo.toml --workspace"
+
+[[workflows.steps]]
+type = "Command"
+command = "git add rust/Cargo.lock"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release $version"
+
+[workflows.steps.body]
+template = "Opened by knope's prepare-release workflow. Merging this PR tags and publishes the release described below.\n\n$changelog"
+
+# The release PR consumes fragments rather than adding one.
+[[workflows.steps]]
+type = "Command"
+command = "gh pr edit release --add-label no-changeset"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"

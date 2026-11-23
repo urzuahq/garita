@@ -2,8 +2,11 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+  merge_group:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,59 +16,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: rust
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
-        run: |
-          rustup show
-          rustup component add rustfmt clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: rust
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: cargo build
-        run: cargo build --workspace --locked
-      - name: cargo test
-        run: cargo test --workspace --locked
-      - name: install cargo-deny and cargo-machete (pinned, checksummed)
-        working-directory: .
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
-          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o deny.tgz https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.4/cargo-deny-0.19.4-x86_64-unknown-linux-musl.tar.gz
-          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o machete.tgz https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.1/cargo-machete-v0.9.1-x86_64-unknown-linux-musl.tar.gz
-          echo "3bd58b784e83715b86ddbc9deac591890372ec77fda5741bb0826970b958506f  deny.tgz" | sha256sum -c -
-          echo "640b0814480b401e4e72201e52a13e1311b8eb8d7c27faa08bbe9886f252f26d  machete.tgz" | sha256sum -c -
-          tar -xzf deny.tgz --strip-components=1 --wildcards '*/cargo-deny'
-          tar -xzf machete.tgz --strip-components=1 --wildcards '*/cargo-machete'
-          echo "$PWD" >> "$GITHUB_PATH"
-      - name: cargo machete (unused dependencies)
-        run: cargo machete
-      - name: cargo deny (advisories, bans, licenses, sources)
-        run: cargo deny check
-
-  contract:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  checks:
+    uses: ./.github/workflows/checks.yml
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: scripts/contract-check.sh --release
 
   records:
     runs-on: ubuntu-latest
@@ -82,3 +36,98 @@ jobs:
         with:
           version: v0.4.13
           base-ref: ${{ github.base_ref }}
+
+  changeset:
+    name: changeset required
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: does this PR touch a release path?
+        id: scope
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF"
+          changed=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+          while IFS= read -r prefix; do
+            case "$prefix" in ''|\#*) continue ;; esac
+            if printf '%s\n' "$changed" | grep -q "^$(printf '%s' "$prefix" | sed 's/[][\.*^$/]/\\&/g')"; then
+              echo "touches $prefix -- a changelog entry may be needed"
+              echo "affects=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < .github/release-paths
+          echo "no release path changed -- no changeset needed"
+      # Read live: the event payload is a snapshot from when the event fired.
+      - name: check for the no-changeset opt-out
+        if: steps.scope.outputs.affects == 'true'
+        id: optout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json labels \
+               --jq '.labels[].name' | grep -qx 'no-changeset'; then
+            echo "no-changeset label present"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      # A skipped step leaves its output empty, which is not 'true', so both
+      # conditions are needed.
+      - name: verify this PR adds a .changeset fragment
+        if: steps.scope.outputs.affects == 'true' && steps.optout.outputs.skip != 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF"
+          added=$(git diff --name-only --diff-filter=A "origin/$BASE_REF"...HEAD -- '.changeset/*.md' || true)
+          if [ -z "$added" ]; then
+            echo "no .changeset/*.md fragment added -- run 'knope document-change', or label this PR 'no-changeset' if there is nothing to release"
+            exit 1
+          fi
+          echo "found: $added"
+
+  release-invariants:
+    name: release invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # The guard compares the manifest version with the newest tag, so it
+      # needs full history and tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: check the invariants on this ref
+        run: |
+          .github/scripts/release-invariants.sh \
+            .changeset rust/Cargo.toml "$(git tag --sort=-v:refname | head -1)"
+
+  # The one required check. A failure, a cancellation and a skip all fail it;
+  # `changeset` exists on pull requests alone, so it is the only job that may skip.
+  ci:
+    name: ci
+    needs: [checks, records, changeset, release-invariants]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: fail unless every required job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          ALLOW_SKIPPED: ${{ github.event_name != 'pull_request' && 'changeset' || '' }}
+        run: .github/scripts/ci-gate.sh --allow-skipped "$ALLOW_SKIPPED"
