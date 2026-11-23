@@ -14,7 +14,9 @@ set -uo pipefail
 allow=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --allow-skipped) allow="${2:-}"; shift 2 ;;
+    --allow-skipped)
+      [ "$#" -ge 2 ] || { echo "ci-gate: --allow-skipped needs a value" >&2; exit 2; }
+      allow="$2"; shift 2 ;;
     *) echo "ci-gate: unknown argument $1" >&2; exit 2 ;;
   esac
 done

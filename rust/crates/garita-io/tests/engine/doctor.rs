@@ -444,12 +444,29 @@ fn snapshot(root: &Path) -> (String, BTreeMap<String, Vec<u8>>) {
             }
         }
     }
+    // `--no-optional-locks` keeps this status from refreshing the index it is about to compare.
+    let status = git_in(
+        root,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+    );
     let mut files = BTreeMap::new();
     walk(root, root, &mut files);
-    (
-        git_in(root, &["status", "--porcelain", "--untracked-files=all"]),
-        files,
-    )
+    (status, files)
+}
+
+fn differing(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
+    a.keys()
+        .chain(b.keys())
+        .filter(|k| a.get(*k) != b.get(*k))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[test]
@@ -460,7 +477,9 @@ fn doctor_leaves_the_repository_byte_identical() {
     repo.write("new.ts", "new\n");
     let before = snapshot(&repo.root());
     doctor(&repo);
-    assert_eq!(snapshot(&repo.root()), before);
+    let after = snapshot(&repo.root());
+    assert_eq!(differing(&before.1, &after.1), Vec::<String>::new());
+    assert_eq!(after.0, before.0);
     assert!(repo.receipts().is_empty());
 }
 

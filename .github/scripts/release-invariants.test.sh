@@ -41,7 +41,7 @@ manifest "0.4.0" "$inflight/Cargo.toml"
 expect 0 "the same bump is legitimate once the fragments are consumed" \
   "$guard" "$inflight/.changeset" "$inflight/Cargo.toml" "v0.3.0"
 
-notag=$tmp/notag; mkdir -p "$notag/.changeset"
+notag=$tmp/notag; git init -q "$notag"; mkdir -p "$notag/.changeset"
 printf -- '---\ndefault: patch\n---\n\nA fix.\n' > "$notag/.changeset/a.md"
 manifest "0.1.0" "$notag/Cargo.toml"
 expect 0 "no tags yet is nothing to compare against" \
@@ -55,7 +55,7 @@ mkdir -p "$tmp/shallow-clone/.changeset"
 printf -- '---\ndefault: patch\n---\n\nA fix.\n' > "$tmp/shallow-clone/.changeset/a.md"
 manifest "0.1.0" "$tmp/shallow-clone/Cargo.toml"
 expect 1 "a shallow checkout with no tags is not agreement" \
-  bash -c 'cd "$1" && "$2" .changeset Cargo.toml ""' _ "$tmp/shallow-clone" "$guard"
+  "$guard" "$tmp/shallow-clone/.changeset" "$tmp/shallow-clone/Cargo.toml" ""
 
 # --- 2. a fragment's declared level against its own prose
 

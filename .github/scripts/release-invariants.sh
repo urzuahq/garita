@@ -27,7 +27,7 @@ version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$manifest" | head -1)
 
 if [ "$pending" -gt 0 ]; then
   if [ -z "$latest_tag" ]; then
-    if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    if [ "$(git -C "$(dirname "$changeset_dir")" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
       echo "::error::shallow checkout: the tags cannot be read, so $manifest's version cannot be compared against the newest tag"
       fail=1
     fi
