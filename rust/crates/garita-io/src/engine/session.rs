@@ -5,9 +5,7 @@ use std::time::{Instant, SystemTime};
 use garita_core::ObjectId;
 use garita_core::config::{Check, CheckForm, Config, OnExceed, satisfies};
 use garita_core::receipt::file_name;
-use garita_core::report::{
-    CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger, rerun_command,
-};
+use garita_core::report::{CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger};
 
 use super::exec;
 use super::finding::{GARITA, finding, seconds};
@@ -271,10 +269,6 @@ impl<'a> Session<'a> {
         };
         let entries = results.iter().map(|r| r.entry.clone()).collect();
         let mut report = Report::from_run(context, entries, findings, error);
-        if report.next_action.as_deref() == Some(rerun_command(Some(trigger), GARITA, &[]).as_str())
-        {
-            report.next_action = Some(format!("garita run --trigger {}", trigger.as_str()));
-        }
         let finished_at = crate::clock::rfc3339(self.clock.now());
         let facts = RunFacts {
             root: &self.root,

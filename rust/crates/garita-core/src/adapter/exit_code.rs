@@ -3,6 +3,7 @@ use crate::report::Severity;
 
 const STREAM_LINES: usize = 10;
 const TAIL_BYTES: usize = 4000;
+const NOTABLE_LINES: usize = 5;
 
 /// Reads only the exit code, keeping the output's last lines as the finding's message.
 pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
@@ -33,22 +34,27 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     }
 }
 
-/// The last non-blank lines of stderr and of stdout, each stream given its own
-/// [`STREAM_LINES`] and an equal share of [`TAIL_BYTES`], labelled when both have any.
+/// Up to [`NOTABLE_LINES`] lines from anywhere in the output that look like a reason, then the
+/// last non-blank lines of stderr and of stdout; each block gets at most [`STREAM_LINES`] and an
+/// equal share of [`TAIL_BYTES`], and blocks are labelled when there is more than one.
 pub fn tail(stderr: &str, stdout: &str) -> String {
-    let streams: Vec<(&str, Vec<&str>)> = [("stderr", stderr), ("stdout", stdout)]
-        .into_iter()
-        .map(|(label, text)| (label, last_lines(text)))
+    let tails = [
+        ("stderr", last_lines(stderr)),
+        ("stdout", last_lines(stdout)),
+    ];
+    let notable = notable_lines(stderr, stdout, &tails);
+    let blocks: Vec<(&str, Vec<&str>)> = std::iter::once(("notable", notable))
+        .chain(tails)
         .filter(|(_, lines)| !lines.is_empty())
         .collect();
-    let labelled = streams.len() > 1;
-    let labels = if labelled {
-        "stderr:\nstdout:\n\n".len()
+    let labelled = blocks.len() > 1;
+    let labels: usize = if labelled {
+        blocks.iter().map(|(label, _)| label.len() + 3).sum()
     } else {
         0
     };
-    let share = (TAIL_BYTES - labels) / streams.len().max(1);
-    streams
+    let share = TAIL_BYTES.saturating_sub(labels) / blocks.len().max(1);
+    blocks
         .iter()
         .map(|(label, lines)| {
             let body = last_bytes(&lines.join("\n"), share);
@@ -63,13 +69,54 @@ pub fn tail(stderr: &str, stdout: &str) -> String {
 }
 
 fn last_lines(text: &str) -> Vec<&str> {
-    let lines: Vec<&str> = text
+    let mut lines: Vec<&str> = text
         .lines()
+        .rev()
         .map(|l| clip(l.trim_end()))
         .filter(|l| !l.trim().is_empty())
+        .take(STREAM_LINES)
         .collect();
-    let keep = lines.len().saturating_sub(STREAM_LINES);
-    lines.get(keep..).unwrap_or_default().to_vec()
+    lines.reverse();
+    lines
+}
+
+/// Lines from both streams, in order, that name an error, skipping Node's deprecation noise and
+/// lines the tails already hold.
+fn notable_lines<'a>(
+    stderr: &'a str,
+    stdout: &'a str,
+    tails: &[(&str, Vec<&str>)],
+) -> Vec<&'a str> {
+    let mut found: Vec<&str> = Vec::new();
+    for line in stderr.lines().chain(stdout.lines()) {
+        if found.len() == NOTABLE_LINES {
+            break;
+        }
+        let line = clip(line.trim_end());
+        let held = tails.iter().any(|(_, t)| t.contains(&line));
+        if !held && !found.contains(&line) && is_notable(line) {
+            found.push(line);
+        }
+    }
+    found
+}
+
+fn is_notable(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("(node:") || line.contains("DeprecationWarning") {
+        return false;
+    }
+    let lower = line.to_ascii_lowercase();
+    ["error", "invalid", "failed", "fail:"].iter().any(|word| {
+        lower.match_indices(word).any(|(at, _)| {
+            lower
+                .get(..at)
+                .unwrap_or_default()
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_ascii_alphabetic())
+        })
+    })
 }
 
 fn last_bytes(text: &str, limit: usize) -> String {
@@ -104,6 +151,37 @@ mod tests {
         let got = tail(&numbered("warn", 30), "error: the real one\n");
         assert!(got.starts_with("stderr:\nwarn 21\n"), "{got}");
         assert!(got.ends_with("stdout:\nerror: the real one"), "{got}");
+    }
+
+    #[test]
+    fn an_early_reason_line_is_kept_as_notable() {
+        let mut stdout = "0004-x.md: invalid status \"Acceptedd\"\n".to_string();
+        stdout.push_str("(node:1) [DEP0169] DeprecationWarning: error-ish noise\n");
+        stdout.push_str("noerrors here\n");
+        stdout.push_str(&numbered("ok", 40));
+        let got = tail("", &stdout);
+        assert!(
+            got.starts_with("notable:\n0004-x.md: invalid status \"Acceptedd\"\nstdout:\nok 31\n"),
+            "{got}"
+        );
+        assert!(
+            !got.contains("Deprecation") && !got.contains("noerrors"),
+            "{got}"
+        );
+    }
+
+    #[test]
+    fn notable_lines_are_capped_and_not_repeated_from_the_tails() {
+        let stderr: String = (1..=20).map(|i| format!("Error {i}\n")).collect();
+        let got = tail(&stderr, &numbered("x", 30));
+        assert!(
+            got.starts_with(
+                "notable:\nError 1\nError 2\nError 3\nError 4\nError 5\nstderr:\nError 11\n"
+            ),
+            "{got}"
+        );
+        let got = tail("Error 1\nError 1\n", "");
+        assert_eq!(got, "Error 1\nError 1");
     }
 
     #[test]

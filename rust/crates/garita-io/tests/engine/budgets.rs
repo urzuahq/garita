@@ -1,6 +1,6 @@
 use std::fs;
 
-use garita_core::report::{CheckStatus, Severity, Trigger};
+use garita_core::report::{CheckStatus, RunStatus, Severity, Trigger};
 
 use crate::support::{Repo, check, finding, rules};
 
@@ -134,10 +134,40 @@ fn a_trigger_over_budget_with_fail_blocks_and_reruns_the_trigger() {
     let out = repo.run();
     assert_eq!(finding(&out.report, "budget").severity, Severity::Error);
     assert_eq!(out.exit_code(), 1);
-    assert_eq!(
-        out.report.next_action.as_deref(),
-        Some("garita run --trigger commit")
+    assert_eq!(out.report.next_action.as_deref(), Some("garita run"));
+}
+
+#[test]
+fn a_trigger_over_budget_with_a_failing_check_reruns_a_command_that_runs() {
+    let repo = Repo::new();
+    let tool = repo.tool("bad", "exit 1");
+    repo.config(&format!(
+        "schema_version: 1\nbudgets: {{ on_exceed: fail }}\n\
+         triggers:\n  commit: {{ budget: {{ duration: 1ms }} }}\nchecks:\n  a:\n    run: {tool}\n"
+    ));
+    let out = repo.run();
+    let next = out.report.next_action.clone().unwrap_or_default();
+    assert_eq!(next, "garita run");
+    let words: Vec<&str> = next.split_whitespace().collect();
+    assert_eq!(words.get(..2), Some(&["garita", "run"][..]));
+    let mut request = repo.request(Trigger::Commit);
+    let mut rest = words.iter().skip(2);
+    while let Some(word) = rest.next() {
+        if *word == "--trigger" {
+            let name = rest.next().copied().unwrap_or_default();
+            request = repo.request(Trigger::from_name(name).unwrap());
+        } else {
+            request.checks.push((*word).to_string());
+        }
+    }
+    let again = repo.run_request(&request);
+    assert_ne!(
+        again.report.status,
+        RunStatus::NotRun,
+        "{:#?}",
+        again.report
     );
+    assert_eq!(check(&again.report, "a").status, CheckStatus::Fail);
 }
 
 #[test]

@@ -395,16 +395,18 @@ fn failing_rerun(
             .iter()
             .any(|f| f.check == name && f.severity == Severity::Error)
     };
-    let mut names: Vec<&str> = checks
+    let names: Vec<&str> = checks
         .iter()
         .filter(|c| c.status == CheckStatus::Fail || has_error(&c.name))
         .map(|c| c.name.as_str())
         .collect();
-    for f in findings.iter().filter(|f| f.severity == Severity::Error) {
-        let listed = checks.iter().any(|c| c.name == f.check);
-        if !listed && !names.contains(&f.check.as_str()) {
-            names.push(&f.check);
-        }
+    let run_level = findings
+        .iter()
+        .any(|f| f.severity == Severity::Error && !checks.iter().any(|c| c.name == f.check));
+    // An error that belongs to no listed check (a trigger's budget) can only be re-run by
+    // running the trigger again, so it widens the re-run to the whole trigger.
+    if run_level {
+        return Some(rerun_checks(trigger, &[], &[]));
     }
     let first = *names.first()?;
     if names.len() == 1 {
@@ -703,13 +705,27 @@ mod tests {
         let f = [
             finding("lint", Severity::Error, Some("a.ts")),
             finding("types", Severity::Error, None),
-            finding("budget", Severity::Error, None),
         ];
         let next = next_action(Some(Trigger::Push), RunStatus::Fail, &checks, &f);
         assert_eq!(
             next.action.as_deref(),
-            Some("garita run --trigger push lint types budget")
+            Some("garita run --trigger push lint types")
         );
+    }
+
+    #[test]
+    fn an_error_outside_every_check_reruns_the_whole_trigger() {
+        let checks = [
+            check("lint", CheckStatus::Fail, 1),
+            check("types", CheckStatus::Fail, 1),
+        ];
+        let f = [
+            finding("lint", Severity::Error, Some("a.ts")),
+            finding("types", Severity::Error, None),
+            finding("budget", Severity::Error, None),
+        ];
+        let next = next_action(Some(Trigger::Push), RunStatus::Fail, &checks, &f);
+        assert_eq!(next.action.as_deref(), Some("garita run --trigger push"));
         assert_eq!(next.reason.as_deref(), Some("3 errors in 3 checks"));
     }
 
@@ -726,7 +742,7 @@ mod tests {
     fn fail_from_a_finding_whose_check_is_not_listed() {
         let f = [finding("budget", Severity::Error, None)];
         let next = next_action(None, RunStatus::Fail, &[], &f);
-        assert_eq!(next.action.as_deref(), Some("garita run budget"));
+        assert_eq!(next.action.as_deref(), Some("garita run"));
     }
 
     #[test]

@@ -67,22 +67,58 @@ fn rank(severity: Severity) -> u8 {
     }
 }
 
-/// ` - <place><rule> <message>` for the check's first finding of its worst severity, with how
-/// many more share that severity.
-/// A message's first line, joined with the first line of output after it when the first line only
-/// introduces that output (`exited with code 1:`), so the reason shows in the summary.
+/// A message's first line, joined with the line most likely to say why when the first line only
+/// introduces output (`exited with code 1:`).
 fn brief(message: &str) -> String {
-    let mut lines = message.lines().map(str::trim).filter(|l| !l.is_empty());
-    let first = lines.next().unwrap_or_default();
+    let mut lines = message.lines();
+    let first = lines.next().unwrap_or_default().trim();
     if !first.ends_with(':') {
         return first.to_string();
     }
-    match lines.find(|l| !matches!(*l, "stderr:" | "stdout:")) {
-        Some(reason) => format!("{first} {reason}"),
+    match reason(lines) {
+        Some(reason) => format!("{first} {}", clip(reason)),
         None => first.to_string(),
     }
 }
 
+const REASON_BYTES: usize = 200;
+
+fn clip(line: &str) -> &str {
+    let mut end = line.len().min(REASON_BYTES);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    line.get(..end).unwrap_or_default()
+}
+
+/// The first `notable:` line, else the last `stderr:` line, else the last of `stdout:` or of an
+/// unlabelled block.
+fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let mut section = "";
+    let mut notable = None;
+    let mut stderr = None;
+    let mut other = None;
+    for line in lines.map(str::trim).filter(|l| !l.is_empty()) {
+        if let Some(label) = ["notable:", "stderr:", "stdout:"]
+            .into_iter()
+            .find(|l| *l == line)
+        {
+            section = label;
+            continue;
+        }
+        match section {
+            "notable:" => {
+                notable.get_or_insert(line);
+            }
+            "stderr:" => stderr = Some(line),
+            _ => other = Some(line),
+        }
+    }
+    notable.or(stderr).or(other)
+}
+
+/// ` - <place><rule> <message>` for the check's first finding of its worst severity, with how
+/// many more share that severity.
 fn headline(report: &Report, check: &str) -> String {
     let own: Vec<_> = report
         .findings
@@ -171,20 +207,42 @@ mod tests {
     }
 
     #[test]
-    fn a_message_that_introduces_output_shows_the_first_line_of_it() {
+    fn a_message_that_introduces_output_shows_a_line_of_it() {
         assert_eq!(
             brief("exited with code 1:\nstderr:\n--fail-on-drift set: failing\nstdout:\n{}"),
             "exited with code 1: --fail-on-drift set: failing"
         );
         assert_eq!(
             brief("exited with code 3:\nboom\nmore"),
-            "exited with code 3: boom"
+            "exited with code 3: more"
         );
         assert_eq!(
             brief("Unexpected `debugger`\nhelp"),
             "Unexpected `debugger`"
         );
         assert_eq!(brief("exited with code 1:"), "exited with code 1:");
+    }
+
+    #[test]
+    fn the_reason_line_is_the_notable_then_stderr_then_stdout_line() {
+        assert_eq!(
+            brief("exited with code 1:\n(node:1) DeprecationWarning\nturbo 2.5.6\nreal reason"),
+            "exited with code 1: real reason"
+        );
+        assert_eq!(
+            brief("exited with code 1:\nstderr:\nwhy\nwhy last\nstdout:\nnoise"),
+            "exited with code 1: why last"
+        );
+        assert_eq!(
+            brief("exited with code 1:\nnotable:\nbad: invalid\nlater error\nstderr:\nx"),
+            "exited with code 1: bad: invalid"
+        );
+        assert_eq!(
+            brief("exited with code 1 and printed nothing\nx"),
+            "exited with code 1 and printed nothing"
+        );
+        let long = brief(&format!("exited with code 1:\n{}", "é".repeat(500)));
+        assert!(long.len() < 250, "{long}");
     }
 
     #[test]

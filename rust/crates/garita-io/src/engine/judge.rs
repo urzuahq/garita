@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use garita_core::adapter::{Adapter, Outcome as Parsed, ParseContext, ToolOutput, output_tail};
+use garita_core::adapter::{
+    Adapter, Outcome as Parsed, ParseContext, ToolOutput, fingerprint, output_tail,
+};
 use garita_core::config::{Check, Config, OnCrash, OnExceed};
 use garita_core::report::{
     CheckEntry, CheckKind, CheckStatus, Examined, Finding, Severity, Trigger, rerun_command,
@@ -206,7 +208,14 @@ impl Tally<'_> {
                         stderr: "",
                         exit_code: task.exit_code,
                     };
+                    let start = self.findings.len();
                     self.parsed(&output, &task.directory, None);
+                    for f in self.findings.iter_mut().skip(start) {
+                        if f.file.is_none() {
+                            f.message = format!("{}: {}", task.task, f.message);
+                            f.fingerprint = Some(fingerprint(&f.rule, None, &f.message));
+                        }
+                    }
                 }
             }
             Err(reason) => {

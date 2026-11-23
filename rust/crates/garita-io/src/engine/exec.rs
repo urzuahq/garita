@@ -36,11 +36,14 @@ pub struct Executed {
     pub tail: String,
 }
 
-/// Runs every plan on a pool sized to the machine; each plan's units run in turn.
+/// Runs every plan on a pool sized to the machine; each plan's units run in turn, and `via`
+/// plans sharing a directory run one after another, since each reads the run summary turbo
+/// leaves there.
 pub fn run_all(root: &Path, run_id: &str, plans: &[Plan<'_>]) -> Vec<Executed> {
+    let jobs = jobs(plans);
     let workers = thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
-        .min(plans.len())
+        .min(jobs.len())
         .max(1);
     let next = AtomicUsize::new(0);
     let slots: Mutex<Vec<Option<Executed>>> = Mutex::new(vec![None; plans.len()]);
@@ -48,14 +51,17 @@ pub fn run_all(root: &Path, run_id: &str, plans: &[Plan<'_>]) -> Vec<Executed> {
         for _ in 0..workers {
             s.spawn(|| {
                 loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(plan) = plans.get(i) else { break };
-                    let done = execute(root, run_id, plan);
-                    let mut slots = slots
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if let Some(slot) = slots.get_mut(i) {
-                        *slot = Some(done);
+                    let j = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(job) = jobs.get(j) else { break };
+                    for &i in job {
+                        let Some(plan) = plans.get(i) else { continue };
+                        let done = execute(root, run_id, plan);
+                        let mut slots = slots
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if let Some(slot) = slots.get_mut(i) {
+                            *slot = Some(done);
+                        }
                     }
                 }
             });
@@ -67,6 +73,32 @@ pub fn run_all(root: &Path, run_id: &str, plans: &[Plan<'_>]) -> Vec<Executed> {
         .into_iter()
         .map(|slot| slot.unwrap_or_else(lost))
         .collect()
+}
+
+/// Plan indices grouped into jobs: one per plan, except that `via` plans whose units share a
+/// directory form one job.
+fn jobs(plans: &[Plan<'_>]) -> Vec<Vec<usize>> {
+    let mut jobs: Vec<Vec<usize>> = Vec::new();
+    let mut by_dir: Vec<(Vec<&str>, usize)> = Vec::new();
+    for (i, plan) in plans.iter().enumerate() {
+        if !plan.turbo {
+            jobs.push(vec![i]);
+            continue;
+        }
+        let dirs: Vec<&str> = plan.units.iter().map(|u| u.cwd.as_str()).collect();
+        let shared = by_dir
+            .iter()
+            .find(|(seen, _)| seen.iter().any(|d| dirs.contains(d)))
+            .map(|(_, job)| *job);
+        match shared.and_then(|job| jobs.get_mut(job)) {
+            Some(job) => job.push(i),
+            None => {
+                by_dir.push((dirs, jobs.len()));
+                jobs.push(vec![i]);
+            }
+        }
+    }
+    jobs
 }
 
 fn lost() -> Executed {
@@ -165,7 +197,9 @@ fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: &Path) -> UnitRun
     invocation.env.clone_from(&plan.env);
     let outcome = process::run(&invocation).map_err(|e| e.to_string());
     let turbo = match (&outcome, before) {
-        (Ok(Outcome::Ran(_)), Some(before)) => Some(turbo::read(&cwd, &unit.cwd, &before)),
+        (Ok(Outcome::Ran(_)), Some(before)) => {
+            Some(turbo::read(&cwd, &unit.cwd, &before, &unit.argv))
+        }
         _ => None,
     };
     UnitRun {

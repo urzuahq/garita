@@ -203,3 +203,109 @@ fn a_turbo_usage_error_says_what_turbo_printed() {
     );
     assert!(f.message.contains("Usage: turbo run"), "{}", f.message);
 }
+
+/// A turbo summary with one task per `(package, exit)` pair, and each task's log.
+fn writes_tasks(task: &str, run_id: &str, tasks: &[(&str, i32, &str)]) -> String {
+    let entries: Vec<String> = tasks
+        .iter()
+        .map(|(pkg, code, _)| {
+            format!(
+                "{{\"taskId\":\"{pkg}#{task}\",\"task\":\"{task}\",\"package\":\"{pkg}\",\
+                 \"directory\":\"packages/{pkg}\",\"logFile\":\"packages/{pkg}/.turbo/{task}.log\",\
+                 \"cache\":{{\"status\":\"MISS\"}},\"execution\":{{\"exitCode\":{code}}}}}"
+            )
+        })
+        .collect();
+    let mut body = String::from("mkdir -p .turbo/runs\n");
+    for (pkg, _, log) in tasks {
+        body.push_str(&format!(
+            "mkdir -p packages/{pkg}/.turbo\nprintf '%s\\n' '{log}' > packages/{pkg}/.turbo/{task}.log\n"
+        ));
+    }
+    body.push_str(&format!(
+        "printf '%s' '{{\"tasks\":[{}]}}' > .turbo/runs/{run_id}.json\n",
+        entries.join(",")
+    ));
+    body
+}
+
+#[test]
+fn exit_code_through_turbo_names_each_failing_task() {
+    let repo = Repo::new();
+    let body = writes_tasks(
+        "test",
+        "T",
+        &[
+            ("a", 0, "all good"),
+            ("b", 1, "assertion failed: 1 == 2"),
+            ("c", 0, "fine"),
+        ],
+    );
+    let tool = repo.tool("turbo", &format!("{body}exit 1"));
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  tests:\n    run: {tool} run test\n    via: turbo\n"
+    ));
+    let out = repo.run_at(Trigger::Ci);
+    let errors: Vec<_> = out
+        .report
+        .findings
+        .iter()
+        .filter(|f| f.severity == Severity::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
+    assert_eq!(errors[0].file, None);
+    assert!(
+        errors[0].message.starts_with("b#test: exited with code 1:"),
+        "{}",
+        errors[0].message
+    );
+    assert!(errors[0].message.contains("assertion failed: 1 == 2"));
+    assert_eq!(check(&out.report, "tests").status, CheckStatus::Fail);
+}
+
+/// `lint` writes its summary first and exits last, so a newest-summary lookup would hand it
+/// the one `types` wrote meanwhile.
+#[test]
+fn two_turbo_checks_in_one_directory_each_read_only_their_own_summary() {
+    let repo = Repo::new();
+    for dir in ["bin/lint", "bin/types"] {
+        std::fs::create_dir_all(repo.base().join(dir)).unwrap();
+    }
+    let lint = repo.tool(
+        "lint/turbo",
+        &format!(
+            "{}sleep 0.3\nexit 1",
+            writes_tasks("lint", "L", &[("app", 1, "lint error: no-debugger")])
+        ),
+    );
+    let types = repo.tool(
+        "types/turbo",
+        &format!(
+            "sleep 0.1\n{}exit 1",
+            writes_tasks("types", "T", &[("lib", 1, "type error: TS2322")])
+        ),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {lint} run lint\n    via: turbo\n  \
+         types:\n    run: {types} run types\n    via: turbo\n"
+    ));
+    for _ in 0..3 {
+        let _ = std::fs::remove_dir_all(repo.root().join(".turbo"));
+        let out = repo.run_at(Trigger::Ci);
+        for (name, own, other) in [
+            ("lint", "app#lint", "lib#types"),
+            ("types", "lib#types", "app#lint"),
+        ] {
+            let messages: Vec<&str> = out
+                .report
+                .findings
+                .iter()
+                .filter(|f| f.check == name && f.severity == Severity::Error)
+                .map(|f| f.message.as_str())
+                .collect();
+            assert_eq!(messages.len(), 1, "{messages:#?}");
+            assert!(messages[0].starts_with(own), "{}", messages[0]);
+            assert!(!messages[0].contains(other), "{}", messages[0]);
+        }
+    }
+}
