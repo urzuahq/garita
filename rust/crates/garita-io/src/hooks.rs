@@ -127,8 +127,11 @@ pub fn classify(text: &str, name: &str, trigger: Trigger, formats: &[(u32, Scrip
 }
 
 /// Whether a line runs `garita run` as a command at `trigger`; `commit` is its default trigger.
+/// A line that joins it to another command (`|| true`, `&`, `;`) does not count, since the hook
+/// may then not act on the verdict.
 fn calls_garita(text: &str, trigger: Trigger) -> bool {
-    text.lines().any(|line| {
+    let joined = text.replace("\\\n", " ");
+    joined.lines().any(|line| {
         let line = line.trim();
         let line = line.strip_prefix("exec ").map_or(line, str::trim_start);
         let Some(rest) = line.strip_prefix("garita run") else {
@@ -138,6 +141,12 @@ fn calls_garita(text: &str, trigger: Trigger) -> bool {
             return false;
         }
         let words: Vec<&str> = rest.split_whitespace().collect();
+        if words
+            .iter()
+            .any(|w| !is_fd_redirect(w) && w.contains(['|', '&', ';']))
+        {
+            return false;
+        }
         let mut named = None;
         for (i, word) in words.iter().enumerate() {
             if *word == "--trigger" {
@@ -151,6 +160,13 @@ fn calls_garita(text: &str, trigger: Trigger) -> bool {
             None => trigger == Trigger::Commit,
         }
     })
+}
+
+/// `2>&1` and the like: a redirection between file descriptors, which keeps the verdict.
+fn is_fd_redirect(word: &str) -> bool {
+    let rest = word.trim_start_matches(|c: char| c.is_ascii_digit());
+    rest.strip_prefix(">&")
+        .is_some_and(|fd| !fd.is_empty() && fd.chars().all(|c| c.is_ascii_digit()))
 }
 
 #[cfg(unix)]
