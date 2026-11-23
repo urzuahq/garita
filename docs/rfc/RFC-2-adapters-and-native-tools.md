@@ -133,9 +133,11 @@ stdout, exit codes 0, 1 and 2, a `status`, `blocking`, typed `findings`, an `exa
   `contract_version` with its own. A different major makes the check `not-run`, with a finding that
   names both versions. Garita never guesses at a report it does not understand. Unknown keys from a
   newer minor are ignored.
-- **urzua is the first native tool.** Its report already has the contract's shape. What it lacks is
-  the `describe` command and the `examined` object, which it adds beside its existing
-  `files_examined` in a minor release. Nothing in its output changes or is removed.
+- **urzua is the first native tool.** The contract is written from its report: the exit codes,
+  `status`, `blocking`, `findings`, and `next_action` with its reason and inputs, each input an
+  object naming the placeholder, its flag and what to put there. What urzua lacks is the `describe`
+  command and the `examined` object, which it adds beside its existing `files_examined` in a minor
+  release. Nothing in its output changes or is removed.
 
 Garita is itself a native tool: its own output meets the contract, so one garita can run another, and
 urzua or decision-agent-kit can read a garita report without an adapter.

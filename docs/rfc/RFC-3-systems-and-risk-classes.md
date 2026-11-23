@@ -111,8 +111,10 @@ checks:
   class any touched path matches is the change's class. A renamed or deleted file matches on its old
   path as well as its new one, so moving a file out of a critical directory is a critical change.
 - **The policy is read from the merge base.** A change cannot lower its own class: the `risk` section
-  that judges a change is the one on the target branch. `.garita/config.yaml` is matched to the
-  highest declared class by construction.
+  that judges a change is the one on the target branch, and so is the definition of every check a
+  class requires (its command, system, threshold and triggers). Otherwise a change could keep its
+  class and replace the reviewer with a command that always passes. `.garita/config.yaml` is matched
+  to the highest declared class by construction.
 - **A class needs a check to satisfy it.** A class that requires a system for which no check is
   declared is a configuration error: `not-run`, exit 2.
 - **`default` is `low`** unless the repository says otherwise, under RFC-1's opt-in principle.
@@ -122,7 +124,7 @@ checks:
 
 ### 4. When a model's verdict blocks
 
-RFC-1 said only a deterministic check can block. With risk classes that becomes:
+RFC-1's principle is "deterministic by default". With risk classes that means:
 
 - A System 1 or System 2 check **blocks only where the change's risk class requires its system**.
   Anywhere else it is advisory and its findings are capped at `warning`, as in RFC-1.
@@ -133,7 +135,7 @@ RFC-1 said only a deterministic check can block. With risk classes that becomes:
   required verdict is written to a receipt and a later run reads the receipt instead of asking again.
   The gate's result for a given change is then stable, though it is not reproducible from scratch.
 - **What a verdict is pinned to.** The tree hash, the model, the prompt version, the task it was
-  judged against and the risk policy in force. A change to any of them makes the verdict stale, and a
+  judged against, the check's own definition and the risk policy in force. A change to any of them makes the verdict stale, and a
   stale verdict does not count. Without the task in the pin, an old "this is the right test" would
   still be cited after the task changed.
 - **A decision model returns a score, not prose.** A System 1 check declares the `threshold` its
@@ -143,7 +145,7 @@ RFC-1 said only a deterministic check can block. With risk classes that becomes:
 
 ### 5. Where each system runs, and where a class is enforced
 
-| Trigger | Budget (RFC-1 §3 defaults) | Systems it runs |
+| Trigger | Budget (RFC-1 §3's example) | Systems it runs |
 |---|---|---|
 | `commit` | 3s | 0 |
 | `push` | 60s | 0, 1 |
@@ -186,10 +188,9 @@ allows: a budget is a limit on any metric a check reports.
 
 ### 7. Relation to RFC-1 and to urzua
 
-This RFC changes three statements in RFC-1, in the same change: the principle "Deterministic blocks,
-advisory everything else" becomes "Deterministic by default"; §9 item 4, model checks being advisory,
-gains the risk-class exception; and the non-goal "Model-judged blocking" is narrowed to blocking
-outside a declared risk class.
+RFC-1 carries the three statements this RFC depends on: the principle "Deterministic by default";
+§9 item 4, where a model check is advisory except where a risk class requires it; and the non-goal,
+which rules out model-judged blocking only outside a declared risk class.
 
 - urzua does not score risk; urzua RFC-27 §2 places risk scoring outside its engine. Garita owns risk.
 - urzua is a System 0 native check (RFC-2) and, through RFC-1 §9's `gate:` locator, can cite a garita

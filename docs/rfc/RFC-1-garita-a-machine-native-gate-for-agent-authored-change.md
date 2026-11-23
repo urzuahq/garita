@@ -71,11 +71,16 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
 - **Fail closed on garita, fail open on infrastructure.** A broken garita install or config blocks, and
   so does a tool that cannot be started (a missing binary, a command that does not resolve): `not-run`,
   exit 2.
-  A tool that started and then crashed or timed out is a `warn` finding naming the crash, never a
+  A tool that started and then crashed or timed out is a `crash` finding at `warning`, never a
   silent pass; `on_crash: fail` makes it block.
+- **A missing config is not a pass.** With no `.garita/config.yaml`, `garita run` is `not-run`, exit
+  2, and its `error` names the missing file. An unparseable config, a config that fails its schema
+  and an unknown key are the same.
 - **Orchestrate, don't replace.** Garita calls Turbo, cargo, oxlint, tsc, Vitest and urzua. It does not
   cache build outputs or compute a package graph itself.
-- **Opt-in configuration.** A repository with no `.garita/config.yaml` gets nothing it did not ask for.
+- **Opt-in configuration.** Garita installs nothing on its own: a repository has a gate only once it
+  adds a config and runs `garita hooks install`. Every key has a default, and a repository declares
+  only what it changes.
 
 ### 2. The model: checks, triggers, scopes and cost
 
@@ -137,11 +142,13 @@ checks:
   types:
     run: turbo type-check {affected}
     parser: tsc
+    via: turbo
     budget: { duration: 20s }
     on: [push, ci]
   test:
     run: turbo test {affected}
     parser: vitest
+    via: turbo
     budget: { duration: 45s }
     on: [push, ci]
   records:
@@ -157,11 +164,12 @@ Every key above is a configuration point with a default; a repository declares o
 
 `{files}` and `{affected}` are filled from the trigger's scope. A check with `{files}` and no matching
 files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose parser
-reports zero files examined when it was given files is a `warn`.
+reports zero files examined when it was given files gets a `no-op` finding at `warning`. A check with
+no placeholder always runs, and what it examined is whatever its adapter reports (RFC-2).
 
 The `staged` scope reads files from the working tree, not the index. A staged file that also has
 unstaged changes is checked with those changes included, so garita reports it as a `partly-staged`
-finding at `warn`.
+finding at `warning`.
 
 ### 4. Budgets are gates
 
@@ -172,18 +180,21 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 
 - **Budget findings.** A check or trigger that runs over its budget produces a `budget` finding, with
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
-  reports it, `fail` blocks, and `demote` moves the check to the next trigger (commit to push, push to
-  CI). A check that has run cannot be un-run, so the over-budget run reports the finding and the
-  demotion takes effect from the next run: garita reads the last receipt for that check and trigger,
-  skips the check there with a `demoted` finding at `info`, and runs it at the later trigger. It
-  stays demoted, visibly, until a run at its own trigger comes in under budget
-  (`garita run <check> --trigger <trigger>` forces one). At the last trigger there is nowhere later
-  to go, so `demote` there acts as `warn`. Demotion is read from this machine's receipts, so it is
+  reports it at `warning`, `fail` reports it at `error`, and `demote` moves the check to a later
+  trigger.
+- **Demotion.** The later trigger is the next one in the check's own `on` list: a check with
+  `on: [commit, ci]` demotes from commit to ci. A check that has run cannot be un-run, so the
+  over-budget run reports the finding and the demotion takes effect from the next run. At each run
+  garita reads the last receipt in which that check actually ran at this trigger; if that run was
+  over budget, the check is skipped here with a `demoted` finding at `info`. It stays demoted,
+  visibly, until `garita run <check> --trigger <trigger>` runs it here under budget. With no later
+  trigger in its `on` list, `demote` acts as `warn`. A trigger's own budget cannot demote anything:
+  for a trigger, `demote` acts as `warn`. Demotion is read from this machine's receipts, so it is
   per machine: a check demoted on a slow laptop still runs at commit elsewhere. A check can override
   the repository's `on_exceed`.
-- **Timeouts.** A budget measures; a timeout kills. Each check has a `timeout`, by default ten times
-  its budget, or the trigger's budget when the check has none. A check killed at its timeout is a
-  crash (`on_crash`), never a pass.
+- **Timeouts.** A budget measures; a timeout kills. A check's timeout is `timeout.factor` times its
+  budget. A check with no budget uses `timeout.factor` times its trigger's budget, and with neither,
+  ten minutes. A check killed at its timeout is a crash (`on_crash`), never a pass.
 - **Regression findings.** Receipts carry every check's duration, so garita compares a run against the
   median of the last `window` runs of that check on the same trigger. A rise past `threshold` is a
   `budget-regression` finding even while the check is still under its absolute budget: the creep is
@@ -203,8 +214,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   "status": "fail",
   "blocking": true,
   "trigger": "push",
-  "commit": "1b29de5ea",
-  "tree": "9c1e4f2ab",
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
   "scope": { "kind": "affected", "packages": ["frontend"] },
   "checks": [
     {
@@ -243,8 +254,16 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 - `findings` holds every finding from every check in one list, each naming its `check`. A finding
   carries `column` and a `fingerprint` that is stable across runs, the fields SARIF and code-quality
   reports need. The top-level `examined` is the total across checks.
+- **When outcomes mix, `not-run` wins.** If any check could not start, the run is `not-run`, exit 2
+  and `blocking` false, whatever else failed, because a gate that did not fully run has no verdict.
+  Otherwise any finding at `error` makes it `fail`. Every finding is still listed.
+- A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
+  finding saying why) or `not-run`.
+- A finding's `severity` is `error`, `warning` or `info`.
 - `next_action` is the narrowest command that re-runs what failed: the failing check, on the failing
-  files or package. It is `null` on a pass.
+  files or package. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+  `next_action_reason` says why, and `next_action_inputs` lists any placeholders, each as urzua
+  prints them: the placeholder, the flag it belongs to and what to put there.
 - `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),
   which is how a no-op is caught.
 - `commit` is `null` at the commit trigger, where no commit exists yet. `tree` is always present.
@@ -293,9 +312,29 @@ that grants garita no authority the repository did not give it.
 
 ### 8. Receipts
 
-Every run writes a receipt: the full JSON result plus the tree hash, a hash of the configuration,
-each tool's version, the machine and garita's version. A result is only evidence for the tree, the
-configuration and the tools that produced it.
+Every run writes a receipt: the report it printed, plus what is needed to say exactly what that
+report is evidence for. A result is only evidence for the tree, the configuration and the tools that
+produced it.
+
+| Field | Meaning |
+|---|---|
+| `receipt_version` | The receipt format's version |
+| `run_id` | A ULID, unique per run |
+| `started_at`, `finished_at` | UTC times of the run |
+| `trigger` | `commit`, `push`, `ci` or `merge` |
+| `commit` | The commit's full hash, or `null` at the commit trigger |
+| `tree` | The full tree hash: the index's tree at the commit trigger, the commit's tree elsewhere |
+| `worktree` | A tree hash computed from the working files, which is what the checks saw |
+| `dirty` | Whether the working files differ from `tree` |
+| `config_hash` | A hash of `.garita/config.yaml` |
+| `machine` | The host that ran it |
+| `tool` | Garita's name and version |
+| `result` | `PASSED`, `WARNED` or `FAILED` |
+| `checks[]` | Per check: `name`, `command`, `scope`, `tool_version`, `started_at`, `finished_at`, `duration_ms`, `exit_code`, `status`, `examined` |
+| `report` | The report the run printed (§5) |
+
+A run that was `not-run` writes a receipt too, with `result` `FAILED`: a gate that could not run is
+not evidence of a pass.
 Receipts live under `.garita/receipts/` (ignored by git) and, in CI, in the run's artifacts. Per urzua
 RFC-3 §5, a run is self-dating and self-scoping, and the receipt is the history: garita keeps no log in
 the repository.
@@ -305,12 +344,9 @@ At the commit trigger no commit exists yet, and a second run must not overwrite 
 are the history that budgets and demotion read. The tree hash, and the commit when there is one, are
 fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones.
 
-Each check's entry records the exact command, its scope, its exit code, and when it started and
-finished, so a receipt can be cited as evidence of what ran. The receipt also records what the checks
-actually saw: `worktree`, a tree hash computed from the working files, beside `tree` (the index's
-tree at the commit trigger, the commit's tree elsewhere) and `dirty`. A reader can then tell exactly
-whether a check ran after the last edit: it did if the working files still hash to the receipt's
-`worktree`. That answer does not depend on comparing clocks, and it is the one decision-agent-kit's
+Each check's entry records the exact command, its exit code and its times, so a receipt can be cited
+as evidence of what ran. `worktree` lets a reader tell exactly whether a check ran after the last
+edit: it did if the working files still hash to the receipt's `worktree`. That answer does not depend on comparing clocks, and it is the one decision-agent-kit's
 stop check needs (§9).
 
 A receipt's `result` uses the words of the in-toto test-result predicate (`PASSED`, `WARNED`,
@@ -343,7 +379,7 @@ Receipts are what make budgets work (§4) and what make the ecosystem compose (�
    transcript which checks ran, whether they passed, and whether they ran after the last edit. A
    receipt states all three, so the rules become exact and the model is asked only about the reply.
 4. **Model checks are advisory in garita.** A decision-agent-kit check can be a garita check with
-   `advisory: true`; its findings are capped at `warn`, so a gate's result stays reproducible. The
+   `advisory: true`; its findings are capped at `warning`, so a gate's result stays reproducible. The
    exception is a check a declared risk class requires (RFC-3).
 5. **One harness adapter layer, eventually.** urzua and decision-agent-kit each ship agent adapters;
    garita needs the same. Garita starts with its own Claude Code adapter and moves to a shared one only
