@@ -7,11 +7,14 @@ make. Until the secrets are set, `prepare-release.yml` prints a notice and does 
 
 ## Steps
 
-1. Create a GitHub App owned by you, with no webhook and these repository permissions only: Contents
-   (read and write) and Pull requests (read and write).
-2. Install the App on this repository only.
+1. Use a GitHub App with no webhook and these repository permissions only: Contents (read and write)
+   and Pull requests (read and write). An App the organisation already owns for releases can be
+   reused: one App can serve several repositories. Otherwise create one.
+2. Install the App on this repository. An App that is reused is installed on each repository it
+   releases, and on no others.
 3. Generate a private key for the App and copy the App's Client ID (not the App ID: the workflow
-   passes it as `client-id`).
+   passes it as `client-id`). A reused App gets a new key for this repository's secret, so one
+   repository's key can be rotated without touching another's.
 4. Set two repository secrets: `RELEASE_APP_CLIENT_ID` (the Client ID) and `RELEASE_APP_PRIVATE_KEY`
    (the whole PEM file). Then delete the local copy of the key.
 5. Create a ruleset that targets `main` only. It should:
@@ -54,5 +57,5 @@ and `garita-aarch64-apple-darwin.tar.gz`.
 
 ## Rotating the key
 
-Generate a new private key in the App settings, store it in `RELEASE_APP_PRIVATE_KEY`, and delete the
-old key from the App.
+Generate a new private key in the App settings, store it in `RELEASE_APP_PRIVATE_KEY`, and delete
+this repository's old key from the App. When the App serves other repositories, leave their keys.
