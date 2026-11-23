@@ -8,6 +8,8 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 installer="$here/install.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/garita-install-test.XXXXXX")"
+# macOS sets TMPDIR with a trailing slash; the script reports its directory as `pwd` prints it.
+tmp="$(CDPATH='' cd -- "$tmp" && pwd)"
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "ok   $1"; }
