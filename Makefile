@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 RUST_DIR := rust
 
-.PHONY: build test fmt fmt-check lint deny contract ci ci-gate-test test-no-leak knope-pin nextest-pin release-invariants knope-validate
+.PHONY: build test fmt fmt-check lint deny contract ci ci-gate-test test-no-leak knope-pin nextest-pin release-invariants release-guard knope-validate
 
 build:
 	cd $(RUST_DIR) && cargo build --workspace --release --locked
@@ -42,7 +42,10 @@ release-invariants:
 	.github/scripts/release-invariants.test.sh
 	.github/scripts/release-invariants.sh .changeset $(RUST_DIR)/Cargo.toml "$$(git tag --sort=-v:refname | head -1)"
 
+release-guard:
+	.github/scripts/release-guard.test.sh
+
 knope-validate:
 	knope --validate
 
-ci: fmt-check lint deny build test test-no-leak contract ci-gate-test nextest-pin knope-pin release-invariants
+ci: fmt-check lint deny build test test-no-leak contract ci-gate-test nextest-pin knope-pin release-invariants release-guard

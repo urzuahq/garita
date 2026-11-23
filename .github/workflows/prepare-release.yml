@@ -1,0 +1,85 @@
+name: prepare release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-release:
+    if: "!startsWith(github.event.head_commit.message, 'chore: prepare release')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The release PR must be opened by a GitHub App: GitHub starts no workflow run from a
+      # GITHUB_TOKEN event, so `ci` would never run on it. There is no fallback to GITHUB_TOKEN.
+      # With neither secret set the App is not set up yet, so the job reports that and stops
+      # rather than turning every push to main red; one secret alone is a broken setup.
+      - name: check the release app secrets
+        id: app
+        env:
+          APP_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_CLIENT_ID" ] && [ -z "$APP_KEY" ]; then
+            echo "::notice::release app not configured; no release PR is prepared. See docs/reference/release-app-setup.md"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$APP_CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY must both be set or both be empty; see docs/reference/release-app-setup.md"
+            exit 1
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: app-token
+        if: steps.app.outputs.configured == 'true'
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - if: steps.app.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - if: steps.app.outputs.configured == 'true'
+        uses: ./.github/actions/install-knope
+      # knope.toml's prepare-release runs `cargo check` to refresh Cargo.lock after the bump.
+      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
+        if: steps.app.outputs.configured == 'true'
+        run: rustup show
+      - if: steps.app.outputs.configured == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+      - name: configure git identity for the release commit
+        if: steps.app.outputs.configured == 'true'
+        run: |
+          git config user.name "garita-release-bot"
+          git config user.email "garita-release-bot@users.noreply.github.com"
+      # Only knope's `releases::no_release` is tolerated; anything else fails the job.
+      - name: open or update the release PR
+        if: steps.app.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -uo pipefail
+          out=$(knope prepare-release --verbose 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          fi
+          .github/scripts/release-guard.sh .changeset "$out"
+          case $? in
+            0) exit 0 ;;
+            1) exit 1 ;;
+            *) echo "::error::knope prepare-release failed (exit $rc)"; exit "$rc" ;;
+          esac
