@@ -20,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 yaml_serde = "0.10"
 clap = { version = "4", features = ["derive"] }
+ulid = "3.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

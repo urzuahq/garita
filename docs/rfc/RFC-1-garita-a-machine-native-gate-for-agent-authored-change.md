@@ -471,7 +471,12 @@ x64) and Linux (x64 and arm64), and an npm wrapper for JavaScript repositories.
 5. **Flaky checks.** A check that passes on a retry is not the same as one that passed. Should
    "passed after N retries" be its own status, and can a flaky check be quarantined (still run,
    unable to block) with an owner and an expiry?
-6. **Noisy timings.** A regression rule of a fixed percentage over a median will fire on a busy
+6. **The cost of `worktree`.** Hashing the working files stores a git object for each changed or
+   untracked file and runs its clean filter, on every run. That is cheap for source files and not
+   for a large untracked file or a repository using large-file storage. It also does not see
+   uncommitted changes inside a submodule. Should `worktree` skip files over a size, or be computed
+   only when a reader asks for it?
+7. **Noisy timings.** A regression rule of a fixed percentage over a median will fire on a busy
    machine. Does it need a statistical test, or a count of consecutive slow runs?
 
 ## Non-goals

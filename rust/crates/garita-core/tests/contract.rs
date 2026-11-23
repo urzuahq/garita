@@ -153,9 +153,9 @@ fn receipt(result: ResultWord, checks: Vec<ReceiptCheck>, report: Report) -> Rec
         started_at: STARTED.into(),
         finished_at: FINISHED.into(),
         trigger: Trigger::Push,
-        commit: Some(COMMIT.into()),
-        tree: TREE.into(),
-        worktree: WORKTREE.into(),
+        commit: Some(COMMIT.parse().unwrap()),
+        tree: TREE.parse().unwrap(),
+        worktree: WORKTREE.parse().unwrap(),
         dirty: false,
         config_hash: "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
             .into(),
