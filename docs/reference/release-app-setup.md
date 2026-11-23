@@ -57,5 +57,5 @@ and `garita-aarch64-apple-darwin.tar.gz`.
 
 ## Rotating the key
 
-Generate a new private key in the App settings, store it in `RELEASE_APP_PRIVATE_KEY`, and delete the
-old key from the App.
+Generate a new private key in the App settings, store it in `RELEASE_APP_PRIVATE_KEY`, and delete
+this repository's old key from the App. When the App serves other repositories, leave their keys.
