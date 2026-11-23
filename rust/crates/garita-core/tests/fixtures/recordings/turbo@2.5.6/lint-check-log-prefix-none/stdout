@@ -1,0 +1,42 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running lint:check in 3 packages
+• Remote caching disabled
+cache miss, executing 2db49199eb88de3b
+cache miss, executing 5ca3e0fa54d73299
+cache miss, executing d904760a67243748
+$ oxlint src
+$ oxlint src
+$ oxlint src
+Found 0 warnings and 0 errors.
+Finished in 5ms on 3 files with 97 rules using 20 threads.
+
+  ! eslint(eqeqeq): Expected === and instead saw ==
+   ,-[src/lint-warn.ts:2:12]
+ 1 | export function same(a: number, b: number): boolean {
+ 2 |   return a == b;
+   :            ^^
+ 3 | }
+   `----
+  help: Prefer === operator
+
+Found 1 warning and 0 errors.
+Finished in 3ms on 2 files with 97 rules using 20 threads.
+
+  x eslint(no-debugger): `debugger` statement is not allowed
+   ,-[src/lint-error.ts:2:3]
+ 1 | export function check(value: number): number {
+ 2 |   debugger;
+   :   ^^^^^^^^^
+ 3 |   return value;
+   `----
+  help: Remove the debugger statement
+
+Found 0 warnings and 1 error.
+Finished in 4ms on 4 files with 97 rules using 20 threads.
+[ELIFECYCLE] Command failed with exit code 1.
+
+ Tasks:    2 successful, 3 total
+Cached:    0 cached, 3 total
+  Time:    110ms 
+Failed:    @fixture/lib#lint:check
+

@@ -1,0 +1,14 @@
+$ oxlint src
+
+  x eslint(no-debugger): `debugger` statement is not allowed
+   ,-[src/lint-error.ts:2:3]
+ 1 | export function check(value: number): number {
+ 2 |   debugger;
+   :   ^^^^^^^^^
+ 3 |   return value;
+   `----
+  help: Remove the debugger statement
+
+Found 0 warnings and 1 error.
+Finished in 7ms on 4 files with 97 rules using 20 threads.
+[ELIFECYCLE] Command failed with exit code 1.

@@ -1,0 +1,24 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running lint:check in 3 packages
+• Remote caching disabled
+@fixture/lib:lint:check: cache miss, executing 5ca3e0fa54d73299
+@fixture/lib:lint:check: $ oxlint src
+@fixture/lib:lint:check: 
+@fixture/lib:lint:check:   x eslint(no-debugger): `debugger` statement is not allowed
+@fixture/lib:lint:check:    ,-[src/lint-error.ts:2:3]
+@fixture/lib:lint:check:  1 | export function check(value: number): number {
+@fixture/lib:lint:check:  2 |   debugger;
+@fixture/lib:lint:check:    :   ^^^^^^^^^
+@fixture/lib:lint:check:  3 |   return value;
+@fixture/lib:lint:check:    `----
+@fixture/lib:lint:check:   help: Remove the debugger statement
+@fixture/lib:lint:check: 
+@fixture/lib:lint:check: Found 0 warnings and 1 error.
+@fixture/lib:lint:check: Finished in 5ms on 4 files with 97 rules using 20 threads.
+@fixture/lib:lint:check: [ELIFECYCLE] Command failed with exit code 1.
+
+ Tasks:    2 successful, 3 total
+Cached:    0 cached, 3 total
+  Time:    107ms 
+Failed:    @fixture/lib#lint:check
+

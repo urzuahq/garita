@@ -1,0 +1,21 @@
+
+  x eslint(no-debugger): `debugger` statement is not allowed
+   ,-[packages/app/src/lint-error.ts:2:3]
+ 1 | export function check(value: number): number {
+ 2 |   debugger;
+   :   ^^^^^^^^^
+ 3 |   return value;
+   `----
+  help: Remove the debugger statement
+
+  x eslint(no-debugger): `debugger` statement is not allowed
+   ,-[packages/app/src/lint-error-2.ts:2:3]
+ 1 | export function inspect(value: string): string {
+ 2 |   debugger;
+   :   ^^^^^^^^^
+ 3 |   return value;
+   `----
+  help: Remove the debugger statement
+
+Found 0 warnings and 2 errors.
+Finished in 5ms on 5 files using 20 threads.

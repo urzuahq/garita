@@ -1,0 +1,36 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running type-check, lint:check in 3 packages
+• Remote caching disabled
+@fixture/app:type-check: cache miss, executing a23f4523bacb66a3
+@fixture/docs:lint:check: cache miss, executing 93b57af965ae4526
+@fixture/app:lint:check: cache miss, executing 591e17ecafb0fd15
+@fixture/docs:type-check: cache miss, executing 1d44381db6074231
+@fixture/lib:lint:check: cache miss, executing 5ca3e0fa54d73299
+@fixture/lib:type-check: cache miss, executing 3f4e9dfa7414562b
+@fixture/lib:type-check: $ tsc --noEmit --pretty false
+@fixture/docs:type-check: $ tsc --noEmit --pretty false
+@fixture/docs:lint:check: $ oxlint src
+@fixture/lib:lint:check: $ oxlint src
+@fixture/app:type-check: $ tsc --noEmit --pretty false
+@fixture/app:lint:check: $ oxlint src
+@fixture/lib:lint:check: 
+@fixture/lib:lint:check:   x eslint(no-debugger): `debugger` statement is not allowed
+@fixture/lib:lint:check:    ,-[src/lint-error.ts:2:3]
+@fixture/lib:lint:check:  1 | export function check(value: number): number {
+@fixture/lib:lint:check:  2 |   debugger;
+@fixture/lib:lint:check:    :   ^^^^^^^^^
+@fixture/lib:lint:check:  3 |   return value;
+@fixture/lib:lint:check:    `----
+@fixture/lib:lint:check:   help: Remove the debugger statement
+@fixture/lib:lint:check: 
+@fixture/lib:lint:check: Found 0 warnings and 1 error.
+@fixture/lib:lint:check: Finished in 5ms on 4 files with 97 rules using 20 threads.
+@fixture/lib:lint:check: [ELIFECYCLE] Command failed with exit code 1.
+@fixture/docs:lint:check: Found 0 warnings and 0 errors.
+@fixture/docs:lint:check: Finished in 4ms on 1 file with 97 rules using 20 threads.
+
+ Tasks:    0 successful, 6 total
+Cached:    0 cached, 6 total
+  Time:    108ms 
+Failed:    @fixture/lib#lint:check
+

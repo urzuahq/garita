@@ -87,19 +87,22 @@ checks:
   from the output and never from the exit code alone. A non-zero exit with no parseable output is a
   crash (RFC-1's `on_crash`).
 
-What the first adapters read:
+What the first adapters read, each settled from a recorded run:
 
-| Tool | Source | Examined count | Limits |
+| Tool | Source | Examined count | What the recording showed |
 |---|---|---|---|
-| oxlint | `--format json` | The report's count of files linted | Exit 1 covers findings, no files matched and a bad config alike |
-| oxfmt | `--list-different` | The files passed to it | Paths only, so a finding has a file and no line or rule |
-| tsc | `--pretty false` diagnostic lines | To be settled from a recorded run | No structured output; multi-line messages continue on indented lines |
+| oxlint | `--format json` | The report's `number_of_files` | Exit 1 covers findings, no files matched and a bad config alike. A bad config prints no JSON at all, and no files matched prints a line of prose before the JSON. The default format changes when the tool detects an agent, so the format is always passed |
+| oxfmt | `--check` | The file count in its closing line | Exit 0 formatted, 1 unformatted, 2 for an error or no files matched. Paths only, so a finding has a file and no line or rule |
+| tsc | `--pretty false` diagnostic lines | `--listFilesOnly`, leaving out the compiler's own library files | TypeScript 5.8 exits 1 or 2 for the same errors depending on build state, and the TypeScript 7 native compiler exits 1 where 5.8 exits 2, so only zero or non-zero means anything. Multi-line messages continue on indented lines. The two compilers print the same diagnostic lines |
 | `exit-code` | The exit code and the last lines of output | The files passed to it | The finding's message is the output tail |
 
+Paths in findings (oxlint's `filename`, oxfmt's listed files, tsc's diagnostic lines) are relative to
+the working directory, so a partitioned run rebases them from the root it ran in. Other output is
+not: `--listFilesOnly` prints absolute paths, and so do some error messages.
+
 **Each adapter is written against a recorded run of the real tool,** and the recordings are its test
-fixtures, with the tool's version in the fixture's name. Documentation is not enough: the facts an
-adapter depends on (exit codes, the text for no files matched, whether paths are relative to the
-working directory) are mostly undocumented.
+fixtures, kept under the tool's version. Documentation is not enough: the facts an adapter depends
+on (exit codes, the text for no files matched, what paths are relative to) are mostly undocumented.
 
 ### 4. Metrics
 
@@ -113,10 +116,14 @@ With `via`, the command garita runs is the runner's, and the runner runs the too
 The adapter needs, per task: the package directory, the exit code and that task's output, which it
 hands to `parse` with paths rebased from the package directory.
 
-The preferred source is the runner's own structured record of the run (for turbo, its run summary
-and per-task logs), because prefixed and interleaved terminal output is the least stable thing a
-runner prints. Splitting prefixed output with grouped log order is the fallback. Which of the two
-turbo supports well enough is settled from a recorded run before this adapter is written.
+For turbo, the adapter runs it with `--summarize` and `--continue` and reads the run summary it
+writes. The summary gives each task's package directory, exit code and log file, with paths relative to
+the workspace root. The log file holds that task's output without turbo's prefix, together with the
+package manager's own lines (the command it ran, and a line reporting a failed exit), which `parse`
+ignores. Without `--continue` a failure can stop the other tasks, and which of them then appear in
+the summary depends on timing, so the adapter always passes it and takes its list of tasks from the
+summary, never from the log files. It never parses turbo's prefixed terminal output, whose order
+changes from run to run.
 
 A runner returns the highest exit code among its tasks, so it cannot tell findings from a crash. The
 adapter classifies each task separately.
@@ -147,7 +154,7 @@ urzua or decision-agent-kit can read a garita report without an adapter.
 ## Phases
 
 - **Phase 0:** the adapter interface with `partition`, `exclude` and `via`; adapters for oxlint,
-  oxfmt, tsc and `exit-code`. Its first step is recording one real run of each tool.
+  oxfmt, tsc and `exit-code`, each written against the recordings.
 - **Phase 1:** native tools, the version check, urzua as the first native check, and plugin
   adapters; adapters for Vitest and cargo.
 
@@ -162,12 +169,12 @@ Decided by the maintainer on 2026-11-22 and 2026-11-23:
 
 ## Open questions
 
-1. **Turbo's structured output.** Whether its run summary and task logs carry enough (exit code and
-   output per task) to avoid parsing prefixed output.
-2. **The examined count for tsc.** Whether the file count comes from `--listFiles`, from extended
-   diagnostics, or cannot be had from the TypeScript 7 compiler.
-3. **Tool versions.** Whether an adapter refuses a tool version it has no recording for, or runs and
+1. **The cost of counting for tsc.** `--listFilesOnly` is a second run of the compiler. Is the count
+   worth that at the push trigger, or is it taken only in CI?
+2. **Tool versions.** Whether an adapter refuses a tool version it has no recording for, or runs and
    warns.
+3. **Tasks a runner replays from its cache.** A cached task has an exit code and a log but did not
+   run. Is its `examined` count the one from the run that was cached?
 
 ## Non-goals
 

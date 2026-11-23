@@ -1,0 +1,20 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running lint:check in 3 packages
+• Remote caching disabled
+@fixture/app:lint:check: cache miss, executing d904760a67243748
+@fixture/lib:lint:check: cache miss, executing a0717402da404d12
+@fixture/docs:lint:check: cache miss, executing 93b57af965ae4526
+@fixture/lib:lint:check: $ oxlint src
+@fixture/app:lint:check: $ oxlint src
+@fixture/docs:lint:check: $ oxlint src
+@fixture/app:lint:check: Found 0 warnings and 0 errors.
+@fixture/app:lint:check: Finished in 7ms on 3 files with 97 rules using 20 threads.
+@fixture/lib:lint:check: Found 0 warnings and 0 errors.
+@fixture/lib:lint:check: Finished in 7ms on 3 files with 97 rules using 20 threads.
+@fixture/docs:lint:check: Found 0 warnings and 0 errors.
+@fixture/docs:lint:check: Finished in 5ms on 1 file with 97 rules using 20 threads.
+
+ Tasks:    3 successful, 3 total
+Cached:    0 cached, 3 total
+  Time:    113ms 
+

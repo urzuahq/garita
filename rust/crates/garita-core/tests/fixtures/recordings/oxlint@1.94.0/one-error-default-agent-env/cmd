@@ -1,0 +1,5 @@
+.
+env
+CLAUDECODE=1
+oxlint
+packages/app/src

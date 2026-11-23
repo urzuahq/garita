@@ -1,0 +1,12 @@
+turbo 2.5.6
+
+ WARNING  An issue occurred while attempting to parse <WORKSPACE>/pnpm-lock.yaml. Turborepo will still function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: deserializing from YAML containing more than
+  |   one document is not supported
+  `-> deserializing from YAML containing more than one document is not
+      supported
+
+@fixture/lib:lint:check: command finished with error, but continuing...
+@fixture/lib#lint:check: command (<WORKSPACE>/packages/lib) <PNPM_BIN>/pnpm run lint:check exited (1)
+ ERROR  run failed: command  exited (1)

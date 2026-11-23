@@ -1,0 +1,11 @@
+{
+  "name": "@fixture/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint:check": "oxlint src",
+    "format:check": "oxfmt --check src",
+    "type-check": "tsc --noEmit --pretty false"
+  }
+}

@@ -1,0 +1,8 @@
+.
+tsc
+--noEmit
+--pretty
+false
+--extendedDiagnostics
+-p
+packages/app

@@ -1,0 +1,12 @@
+turbo 2.5.6
+
+ WARNING  An issue occurred while attempting to parse <WORKSPACE>/pnpm-lock.yaml. Turborepo will still function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: deserializing from YAML containing more than
+  |   one document is not supported
+  `-> deserializing from YAML containing more than one document is not
+      supported
+
+@fixture/app:type-check: ERROR: command finished with error: command (<WORKSPACE>/packages/app) <PNPM_BIN>/pnpm run type-check exited (2)
+@fixture/app#type-check: command (<WORKSPACE>/packages/app) <PNPM_BIN>/pnpm run type-check exited (2)
+ ERROR  run failed: command  exited (2)

@@ -1,0 +1,7 @@
+.
+oxlint
+--format
+json
+-c
+variants/bad-oxlintrc.json
+packages/app/src

@@ -1,0 +1,7 @@
+{ "diagnostics": [{"message": "`debugger` statement is not allowed","code": "eslint(no-debugger)","severity": "error","url": "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html","help": "Remove the debugger statement","filename": "packages/app/src/lint-error.ts","labels": [{"span": {"offset": 49,"length": 9,"line": 2,"column": 3}}]}],
+              "number_of_files": 4,
+              "number_of_rules": null,
+              "threads_count": 20,
+              "start_time": 0.004860133
+            }
+            

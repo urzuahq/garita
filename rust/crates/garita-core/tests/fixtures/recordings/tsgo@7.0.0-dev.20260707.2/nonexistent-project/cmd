@@ -1,0 +1,7 @@
+.
+tsgo
+--noEmit
+--pretty
+false
+-p
+packages/missing

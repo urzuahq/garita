@@ -1,0 +1,175 @@
+{
+  "id": "3MUc3EEfz4TOLp6JOXJThRKCEEj",
+  "version": "1",
+  "turboVersion": "2.5.6",
+  "monorepo": true,
+  "globalCacheInputs": {
+    "rootKey": "I can’t see ya, but I know you’re here",
+    "files": {
+      "package.json": "5fdeb08edc02494d8f388b9f54788aec745fbe01",
+      "pnpm-lock.yaml": "5ffc6393e8b8321b2c829483e43d1985d9690601"
+    },
+    "hashOfExternalDependencies": "",
+    "hashOfInternalDependencies": "",
+    "environmentVariables": {
+      "specified": {
+        "env": [],
+        "passThroughEnv": null
+      },
+      "configured": [],
+      "inferred": [],
+      "passthrough": null
+    },
+    "engines": null
+  },
+  "execution": {
+    "command": "turbo run type-check",
+    "repoPath": "",
+    "success": 1,
+    "failed": 1,
+    "cached": 0,
+    "attempted": 3,
+    "startTime": 1795408384799,
+    "endTime": 1795408385093,
+    "exitCode": 2
+  },
+  "packages": [
+    "@fixture/app",
+    "@fixture/docs",
+    "@fixture/lib"
+  ],
+  "envMode": "strict",
+  "frameworkInference": true,
+  "tasks": [
+    {
+      "taskId": "@fixture/app#type-check",
+      "task": "type-check",
+      "package": "@fixture/app",
+      "hash": "a23f4523bacb66a3",
+      "inputs": {
+        ".oxfmtrc.json": "8d95c2ddacd0a1f0f4ecd4d42e5e92f49825b555",
+        ".oxlintrc.json": "c32cf554d2a7bb5463cb694c8dbc7ba3eb4452b8",
+        "package.json": "74cc2b33efcd557ba85aabfcd239ccc0132a5ff1",
+        "src/App.tsx": "27431a12788a4ef8ad61f4eebc18f61f94f177b7",
+        "src/jsx.d.ts": "5b49e1e2f0f7dfca193f98201d0aec2c377f67f0",
+        "src/main.ts": "f492b76bb2bb1ad53a384c7f0cd507fd9f5dfe2a",
+        "src/type-error.ts": "e36c912e667784d8445d436b52800dab19864220",
+        "tsconfig.json": "ffcdca98fb747ffde03635316a4e22a7d27bac94"
+      },
+      "hashOfExternalDependencies": "",
+      "cache": {
+        "local": false,
+        "remote": false,
+        "status": "MISS",
+        "timeSaved": 0
+      },
+      "command": "tsc --noEmit --pretty false",
+      "cliArguments": [],
+      "outputs": null,
+      "excludedOutputs": null,
+      "logFile": "packages/app/.turbo/turbo-type-check.log",
+      "directory": "packages/app",
+      "dependencies": [],
+      "dependents": [],
+      "with": [],
+      "resolvedTaskDefinition": {
+        "outputs": [],
+        "cache": true,
+        "dependsOn": [],
+        "inputs": [],
+        "outputLogs": "full",
+        "persistent": false,
+        "interruptible": false,
+        "env": [],
+        "passThroughEnv": null,
+        "interactive": false
+      },
+      "expandedOutputs": [],
+      "framework": "",
+      "envMode": "strict",
+      "environmentVariables": {
+        "specified": {
+          "env": [],
+          "passThroughEnv": null
+        },
+        "configured": [],
+        "inferred": [],
+        "passthrough": null
+      },
+      "execution": {
+        "startTime": 1795408384812,
+        "endTime": 1795408385087,
+        "error": "command (<WORKSPACE>/packages/app) <PNPM_BIN>/pnpm run type-check exited (2)",
+        "exitCode": 2
+      }
+    },
+    {
+      "taskId": "@fixture/lib#type-check",
+      "task": "type-check",
+      "package": "@fixture/lib",
+      "hash": "ac6a7c6a4e00ba3a",
+      "inputs": {
+        ".oxfmtrc.json": "8d95c2ddacd0a1f0f4ecd4d42e5e92f49825b555",
+        ".oxlintrc.json": "c32cf554d2a7bb5463cb694c8dbc7ba3eb4452b8",
+        "package.json": "3bd68236045ed454340e90036e572089ce5f2508",
+        "src/index.ts": "fbd89dd0f94b0f9a8ed3d6392d6e82ce9d7ff787",
+        "src/math.ts": "aed61d93952a977dd3208544f2359054f149c406",
+        "src/point.ts": "072c0557deb8e509cbc1b11e0b2099c1203ef499",
+        "tsconfig.json": "6465e6ede8cee621c83badf1402f6eda7121ad2b"
+      },
+      "hashOfExternalDependencies": "",
+      "cache": {
+        "local": false,
+        "remote": false,
+        "status": "MISS",
+        "timeSaved": 0
+      },
+      "command": "tsc --noEmit --pretty false",
+      "cliArguments": [],
+      "outputs": null,
+      "excludedOutputs": null,
+      "logFile": "packages/lib/.turbo/turbo-type-check.log",
+      "directory": "packages/lib",
+      "dependencies": [],
+      "dependents": [],
+      "with": [],
+      "resolvedTaskDefinition": {
+        "outputs": [],
+        "cache": true,
+        "dependsOn": [],
+        "inputs": [],
+        "outputLogs": "full",
+        "persistent": false,
+        "interruptible": false,
+        "env": [],
+        "passThroughEnv": null,
+        "interactive": false
+      },
+      "expandedOutputs": [
+        "packages/lib/.turbo/turbo-type-check.log"
+      ],
+      "framework": "",
+      "envMode": "strict",
+      "environmentVariables": {
+        "specified": {
+          "env": [],
+          "passThroughEnv": null
+        },
+        "configured": [],
+        "inferred": [],
+        "passthrough": null
+      },
+      "execution": {
+        "startTime": 1795408384813,
+        "endTime": 1795408385073,
+        "exitCode": 0
+      }
+    }
+  ],
+  "user": "",
+  "scm": {
+    "type": "git",
+    "sha": "<SHA>",
+    "branch": "<BRANCH>"
+  }
+}

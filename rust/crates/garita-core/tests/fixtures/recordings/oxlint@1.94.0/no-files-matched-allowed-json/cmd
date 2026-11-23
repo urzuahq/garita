@@ -1,0 +1,6 @@
+.
+oxlint
+--format
+json
+--no-error-on-unmatched-pattern
+packages/app/nothing/**/*.ts

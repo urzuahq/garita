@@ -1,0 +1,5 @@
+Failed to parse oxlint configuration file.
+
+  x Failed to parse oxlint config <WORKSPACE>/variants/bad-oxlintrc.json.
+  | EOF while parsing a value at line 2 column 0
+

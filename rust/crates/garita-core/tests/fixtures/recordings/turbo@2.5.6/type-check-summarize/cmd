@@ -1,0 +1,5 @@
+.
+turbo
+run
+type-check
+--summarize

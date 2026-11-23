@@ -1,0 +1,12 @@
+
+  ! eslint(eqeqeq): Expected === and instead saw ==
+   ,-[packages/app/src/lint-warn.ts:2:12]
+ 1 | export function same(a: number, b: number): boolean {
+ 2 |   return a == b;
+   :            ^^
+ 3 | }
+   `----
+  help: Prefer === operator
+
+Found 1 warning and 0 errors.
+Finished in 4ms on 4 files using 20 threads.
