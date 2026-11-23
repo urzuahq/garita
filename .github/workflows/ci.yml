@@ -113,11 +113,27 @@ jobs:
           .github/scripts/release-invariants.sh \
             .changeset rust/Cargo.toml "$(git tag --sort=-v:refname | head -1)"
 
+  install-script:
+    name: install script tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make install-script-test
+
   # The one required check. A failure, a cancellation and a skip all fail it;
   # `changeset` exists on pull requests alone, so it is the only job that may skip.
   ci:
     name: ci
-    needs: [checks, records, changeset, release-invariants]
+    needs: [checks, records, changeset, release-invariants, install-script]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

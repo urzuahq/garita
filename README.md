@@ -30,6 +30,8 @@ To try it, build from source with Rust 1.87 or later:
 cd rust && cargo build --release
 ```
 
+The [install page](docs/reference/install.md) covers the install script, which works once a release exists.
+
 ## Design
 
 - [RFC-1](docs/rfc/RFC-1-garita-a-machine-native-gate-for-agent-authored-change.md): the gate, its
