@@ -1,0 +1,7 @@
+{ "diagnostics": [{"message": "Expected === and instead saw ==","code": "eslint(eqeqeq)","severity": "warning","url": "https://oxc.rs/docs/guide/usage/linter/rules/eslint/eqeqeq.html","help": "Prefer === operator","filename": "packages/app/src/lint-warn.ts","labels": [{"span": {"offset": 65,"length": 2,"line": 2,"column": 12}}]}],
+              "number_of_files": 4,
+              "number_of_rules": null,
+              "threads_count": 20,
+              "start_time": 0.004920134
+            }
+            

@@ -1,0 +1,238 @@
+{
+  "id": "3MUc3d6vGEgDud4nWkN1Cavh0dX",
+  "version": "1",
+  "turboVersion": "2.5.6",
+  "monorepo": true,
+  "globalCacheInputs": {
+    "rootKey": "I can’t see ya, but I know you’re here",
+    "files": {
+      "package.json": "5fdeb08edc02494d8f388b9f54788aec745fbe01",
+      "pnpm-lock.yaml": "5ffc6393e8b8321b2c829483e43d1985d9690601"
+    },
+    "hashOfExternalDependencies": "",
+    "hashOfInternalDependencies": "",
+    "environmentVariables": {
+      "specified": {
+        "env": [],
+        "passThroughEnv": null
+      },
+      "configured": [],
+      "inferred": [],
+      "passthrough": null
+    },
+    "engines": null
+  },
+  "execution": {
+    "command": "turbo run lint:check",
+    "repoPath": "",
+    "success": 2,
+    "failed": 1,
+    "cached": 0,
+    "attempted": 3,
+    "startTime": 1795408388222,
+    "endTime": 1795408388345,
+    "exitCode": 1
+  },
+  "packages": [
+    "@fixture/app",
+    "@fixture/docs",
+    "@fixture/lib"
+  ],
+  "envMode": "strict",
+  "frameworkInference": true,
+  "tasks": [
+    {
+      "taskId": "@fixture/app#lint:check",
+      "task": "lint:check",
+      "package": "@fixture/app",
+      "hash": "d904760a67243748",
+      "inputs": {
+        ".oxfmtrc.json": "8d95c2ddacd0a1f0f4ecd4d42e5e92f49825b555",
+        ".oxlintrc.json": "c32cf554d2a7bb5463cb694c8dbc7ba3eb4452b8",
+        "package.json": "74cc2b33efcd557ba85aabfcd239ccc0132a5ff1",
+        "src/App.tsx": "27431a12788a4ef8ad61f4eebc18f61f94f177b7",
+        "src/jsx.d.ts": "5b49e1e2f0f7dfca193f98201d0aec2c377f67f0",
+        "src/main.ts": "f492b76bb2bb1ad53a384c7f0cd507fd9f5dfe2a",
+        "tsconfig.json": "ffcdca98fb747ffde03635316a4e22a7d27bac94"
+      },
+      "hashOfExternalDependencies": "",
+      "cache": {
+        "local": false,
+        "remote": false,
+        "status": "MISS",
+        "timeSaved": 0
+      },
+      "command": "oxlint src",
+      "cliArguments": [],
+      "outputs": null,
+      "excludedOutputs": null,
+      "logFile": "packages/app/.turbo/turbo-lint$colon$check.log",
+      "directory": "packages/app",
+      "dependencies": [],
+      "dependents": [],
+      "with": [],
+      "resolvedTaskDefinition": {
+        "outputs": [],
+        "cache": true,
+        "dependsOn": [],
+        "inputs": [],
+        "outputLogs": "full",
+        "persistent": false,
+        "interruptible": false,
+        "env": [],
+        "passThroughEnv": null,
+        "interactive": false
+      },
+      "expandedOutputs": [
+        "packages/app/.turbo/turbo-lint$colon$check.log"
+      ],
+      "framework": "",
+      "envMode": "strict",
+      "environmentVariables": {
+        "specified": {
+          "env": [],
+          "passThroughEnv": null
+        },
+        "configured": [],
+        "inferred": [],
+        "passthrough": null
+      },
+      "execution": {
+        "startTime": 1795408388244,
+        "endTime": 1795408388345,
+        "exitCode": 0
+      }
+    },
+    {
+      "taskId": "@fixture/docs#lint:check",
+      "task": "lint:check",
+      "package": "@fixture/docs",
+      "hash": "2db49199eb88de3b",
+      "inputs": {
+        ".oxfmtrc.json": "8d95c2ddacd0a1f0f4ecd4d42e5e92f49825b555",
+        ".oxlintrc.json": "c32cf554d2a7bb5463cb694c8dbc7ba3eb4452b8",
+        "package.json": "90d1e5d5ea26d6cfeb1874b0e42c12df85c44385",
+        "src/guide.md": "018e0b2512b033276b07b901bb7008be1328c6c2",
+        "src/lint-warn.ts": "f92b35098b8233260c15288ac15c94c19dbcc837",
+        "src/notes.md": "a7b5e9def59f46e9c8fccef4b255565ac6386b98",
+        "src/snippets.ts": "abfdd5feb4a17900240bed126e753e3a4d4474a2",
+        "tsconfig.json": "6465e6ede8cee621c83badf1402f6eda7121ad2b"
+      },
+      "hashOfExternalDependencies": "",
+      "cache": {
+        "local": false,
+        "remote": false,
+        "status": "MISS",
+        "timeSaved": 0
+      },
+      "command": "oxlint src",
+      "cliArguments": [],
+      "outputs": null,
+      "excludedOutputs": null,
+      "logFile": "packages/docs/.turbo/turbo-lint$colon$check.log",
+      "directory": "packages/docs",
+      "dependencies": [],
+      "dependents": [],
+      "with": [],
+      "resolvedTaskDefinition": {
+        "outputs": [],
+        "cache": true,
+        "dependsOn": [],
+        "inputs": [],
+        "outputLogs": "full",
+        "persistent": false,
+        "interruptible": false,
+        "env": [],
+        "passThroughEnv": null,
+        "interactive": false
+      },
+      "expandedOutputs": [
+        "packages/docs/.turbo/turbo-lint$colon$check.log"
+      ],
+      "framework": "",
+      "envMode": "strict",
+      "environmentVariables": {
+        "specified": {
+          "env": [],
+          "passThroughEnv": null
+        },
+        "configured": [],
+        "inferred": [],
+        "passthrough": null
+      },
+      "execution": {
+        "startTime": 1795408388247,
+        "endTime": 1795408388343,
+        "exitCode": 0
+      }
+    },
+    {
+      "taskId": "@fixture/lib#lint:check",
+      "task": "lint:check",
+      "package": "@fixture/lib",
+      "hash": "5ca3e0fa54d73299",
+      "inputs": {
+        ".oxfmtrc.json": "8d95c2ddacd0a1f0f4ecd4d42e5e92f49825b555",
+        ".oxlintrc.json": "c32cf554d2a7bb5463cb694c8dbc7ba3eb4452b8",
+        "package.json": "3bd68236045ed454340e90036e572089ce5f2508",
+        "src/index.ts": "fbd89dd0f94b0f9a8ed3d6392d6e82ce9d7ff787",
+        "src/lint-error.ts": "e990b295c31e1e30626971e7e8f2b46043e1f225",
+        "src/math.ts": "aed61d93952a977dd3208544f2359054f149c406",
+        "src/point.ts": "072c0557deb8e509cbc1b11e0b2099c1203ef499",
+        "tsconfig.json": "6465e6ede8cee621c83badf1402f6eda7121ad2b"
+      },
+      "hashOfExternalDependencies": "",
+      "cache": {
+        "local": false,
+        "remote": false,
+        "status": "MISS",
+        "timeSaved": 0
+      },
+      "command": "oxlint src",
+      "cliArguments": [],
+      "outputs": null,
+      "excludedOutputs": null,
+      "logFile": "packages/lib/.turbo/turbo-lint$colon$check.log",
+      "directory": "packages/lib",
+      "dependencies": [],
+      "dependents": [],
+      "with": [],
+      "resolvedTaskDefinition": {
+        "outputs": [],
+        "cache": true,
+        "dependsOn": [],
+        "inputs": [],
+        "outputLogs": "full",
+        "persistent": false,
+        "interruptible": false,
+        "env": [],
+        "passThroughEnv": null,
+        "interactive": false
+      },
+      "expandedOutputs": [],
+      "framework": "",
+      "envMode": "strict",
+      "environmentVariables": {
+        "specified": {
+          "env": [],
+          "passThroughEnv": null
+        },
+        "configured": [],
+        "inferred": [],
+        "passthrough": null
+      },
+      "execution": {
+        "startTime": 1795408388250,
+        "endTime": 1795408388343,
+        "error": "command (<WORKSPACE>/packages/lib) <PNPM_BIN>/pnpm run lint:check exited (1)",
+        "exitCode": 1
+      }
+    }
+  ],
+  "user": "",
+  "scm": {
+    "type": "git",
+    "sha": "<SHA>",
+    "branch": "<BRANCH>"
+  }
+}

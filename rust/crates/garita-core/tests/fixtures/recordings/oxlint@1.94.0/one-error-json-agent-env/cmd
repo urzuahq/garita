@@ -1,0 +1,7 @@
+.
+env
+CLAUDECODE=1
+oxlint
+--format
+json
+packages/app/src

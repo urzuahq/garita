@@ -1,0 +1,4 @@
+.
+oxfmt
+--check
+packages/app/src/unknown.xyz

@@ -1,0 +1,14 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running type-check in 3 packages
+• Remote caching disabled
+@fixture/docs:type-check: cache hit, replaying logs 1d44381db6074231
+@fixture/docs:type-check: $ tsc --noEmit --pretty false
+@fixture/app:type-check: cache hit, replaying logs 05f7f406563b5f01
+@fixture/app:type-check: $ tsc --noEmit --pretty false
+@fixture/lib:type-check: cache hit, replaying logs ac6a7c6a4e00ba3a
+@fixture/lib:type-check: $ tsc --noEmit --pretty false
+
+ Tasks:    3 successful, 3 total
+Cached:    3 cached, 3 total
+  Time:    15ms >>> FULL TURBO
+

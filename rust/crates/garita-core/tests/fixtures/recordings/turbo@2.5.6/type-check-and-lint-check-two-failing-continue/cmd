@@ -1,0 +1,6 @@
+.
+turbo
+run
+type-check
+lint:check
+--continue

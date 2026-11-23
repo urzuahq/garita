@@ -1,0 +1,13 @@
+$ oxlint src
+
+  ! eslint(eqeqeq): Expected === and instead saw ==
+   ,-[src/lint-warn.ts:2:12]
+ 1 | export function same(a: number, b: number): boolean {
+ 2 |   return a == b;
+   :            ^^
+ 3 | }
+   `----
+  help: Prefer === operator
+
+Found 1 warning and 0 errors.
+Finished in 6ms on 2 files with 97 rules using 20 threads.

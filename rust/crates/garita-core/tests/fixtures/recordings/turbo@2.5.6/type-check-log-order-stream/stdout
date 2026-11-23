@@ -1,0 +1,17 @@
+• Packages in scope: @fixture/app, @fixture/docs, @fixture/lib
+• Running type-check in 3 packages
+• Remote caching disabled
+@fixture/app:type-check: cache miss, executing a23f4523bacb66a3
+@fixture/lib:type-check: cache miss, executing ac6a7c6a4e00ba3a
+@fixture/docs:type-check: cache miss, executing 1d44381db6074231
+@fixture/lib:type-check: $ tsc --noEmit --pretty false
+@fixture/docs:type-check: $ tsc --noEmit --pretty false
+@fixture/app:type-check: $ tsc --noEmit --pretty false
+@fixture/app:type-check: src/type-error.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+@fixture/app:type-check: [ELIFECYCLE] Command failed with exit code 2.
+
+ Tasks:    2 successful, 3 total
+Cached:    0 cached, 3 total
+  Time:    308ms 
+Failed:    @fixture/app#type-check
+

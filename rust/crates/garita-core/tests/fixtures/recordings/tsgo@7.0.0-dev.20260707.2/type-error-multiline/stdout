@@ -1,0 +1,3 @@
+packages/app/src/type-error-multiline.ts(5,14): error TS2322: Type '{ x: number; y: number; label: { text: number; visible: boolean; }; }' is not assignable to type 'Point'.
+  The types of 'label.text' are incompatible between these types.
+    Type 'number' is not assignable to type 'string'.

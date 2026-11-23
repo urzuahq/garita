@@ -1,0 +1,5 @@
+.
+oxfmt
+--list-different
+--no-error-on-unmatched-pattern
+packages/app/nothing/**/*.ts

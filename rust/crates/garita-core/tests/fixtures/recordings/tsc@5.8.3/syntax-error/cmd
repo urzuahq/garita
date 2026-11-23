@@ -1,0 +1,7 @@
+.
+tsc
+--noEmit
+--pretty
+false
+-p
+packages/app

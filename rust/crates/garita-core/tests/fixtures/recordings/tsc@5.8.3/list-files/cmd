@@ -1,0 +1,8 @@
+.
+tsc
+--noEmit
+--pretty
+false
+--listFiles
+-p
+packages/app

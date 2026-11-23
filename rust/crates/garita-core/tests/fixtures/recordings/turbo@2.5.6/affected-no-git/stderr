@@ -1,0 +1,14 @@
+turbo 2.5.6
+
+ WARNING  An issue occurred while attempting to parse <WORKSPACE>/pnpm-lock.yaml. Turborepo will still function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: deserializing from YAML containing more than
+  |   one document is not supported
+  `-> deserializing from YAML containing more than one document is not
+      supported
+
+  x Unable to query SCM: <WORKSPACE> is not part of a
+  | Git repository. Git is required for operations based on source control
+  `-> <WORKSPACE> is not part of a Git repository. Git
+      is required for operations based on source control
+

@@ -1,0 +1,5 @@
+.
+tsgo
+-b
+--pretty
+false
