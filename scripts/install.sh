@@ -71,6 +71,16 @@ if [ -z "$dir" ]; then
   dir="$HOME/.local/bin"
 fi
 
+single_line() {
+  case "$1" in
+    *"
+"*) return 1 ;;
+  esac
+}
+
+single_line "$base_url" && single_line "$version" && single_line "$expected_sha" ||
+  usage_error "an argument holds a line break"
+
 case "$base_url" in
   https://*) ;;
   *) fail "GARITA_RELEASE_BASE_URL must start with https:// (got '$base_url')" ;;
@@ -178,6 +188,8 @@ fi
 actual_sha="$(sha256_of "$archive")"
 verified=""
 
+printf '%s' "$actual_sha" | grep -Eq '^[0-9a-f]{64}$' ||
+  fail "could not compute the sha256 of $archive_name; nothing installed"
 if [ -n "$expected_sha" ] && [ "$actual_sha" != "$expected_sha" ]; then
   fail "checksum mismatch for $archive_name: expected $expected_sha, got $actual_sha; nothing installed"
 fi

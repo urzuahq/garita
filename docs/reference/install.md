@@ -10,7 +10,8 @@ Releases are published at <https://github.com/urzuahq/garita/releases> for two t
 `garita-<target>/garita`, `LICENSE` and `README.md`. The install script
 [`scripts/install.sh`](../../scripts/install.sh) picks the target, downloads the archive, verifies it
 and installs it to `$HOME/.local/bin` (no `sudo`). It installs nothing, and runs nothing it
-downloaded, until the archive has verified.
+downloaded, until the archive has verified. The one exception is `--no-verify`, which skips
+verification and so runs the downloaded binary's version check unverified.
 
 ### On a machine with `gh`
 
