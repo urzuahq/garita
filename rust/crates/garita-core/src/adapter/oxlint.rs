@@ -1,7 +1,8 @@
 use serde::Deserialize;
 
-use super::{ParseContext, Parsed, ToolFinding, ToolOutput, nonzero, rebase};
-use crate::argv::quote;
+use super::{
+    ParseContext, Parsed, ToolFinding, ToolOutput, clip, examined_files, nonzero, path_arg, rebase,
+};
 use crate::report::Severity;
 
 const NO_FILES: &str = "No files found to lint";
@@ -37,34 +38,40 @@ struct Span {
     column: u64,
 }
 
-/// Parses `oxlint --format json`, which may be preceded by a line of prose.
+/// Parses `oxlint --format json`: the first JSON value, which prose may precede or follow.
 pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     let Some(exit) = output.exit_code else {
         return Parsed::killed();
     };
-    let Some((prose, json)) = split_json(output.stdout) else {
-        return Parsed::crashed(no_report_reason(output, exit));
+    let report = split_json(output.stdout).and_then(|(prose, json)| {
+        let first = serde_json::Deserializer::from_str(json)
+            .into_iter::<Report>()
+            .next();
+        first.map(|value| value.map(|report| (prose, report)))
+    });
+    let (prose, report) = match (report, exit) {
+        (Some(Ok(found)), _) => found,
+        (_, 0) => return Parsed::crashed(no_report_reason(output, report_error(output.stdout))),
+        _ => return Parsed::unrecognized("oxlint", exit, output),
     };
-    let report: Report = match serde_json::from_str(json) {
-        Ok(report) => report,
-        Err(error) => return Parsed::crashed(format!("oxlint printed invalid JSON: {error}")),
-    };
-    if prose.contains(NO_FILES) {
-        return Parsed::from_findings(Vec::new(), Some(0));
-    }
     let files = report.number_of_files;
     let findings: Vec<ToolFinding> = report
         .diagnostics
         .into_iter()
         .map(|d| finding(d, context.cwd))
         .collect();
+    if findings.is_empty() && prose.contains(NO_FILES) {
+        return Parsed::from_findings(Vec::new(), Some(0));
+    }
     if findings.is_empty() && files > 0 && exit != 0 {
-        return Parsed::crashed(format!("oxlint exited {exit} but reported no diagnostics"));
+        let mut parsed = Parsed::unrecognized("oxlint", exit, output);
+        parsed.examined = examined_files(Some(files));
+        return parsed;
     }
     Parsed::from_findings(findings, Some(files))
 }
 
-/// The prose before the report, and the report from its first line that opens with `{`.
+/// The prose before the report, and the text from its first line that opens with `{`.
 fn split_json(stdout: &str) -> Option<(&str, &str)> {
     let mut offset = 0;
     for line in stdout.split_inclusive('\n') {
@@ -76,7 +83,20 @@ fn split_json(stdout: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn no_report_reason(output: &ToolOutput<'_>, exit: i32) -> String {
+fn report_error(stdout: &str) -> String {
+    match split_json(stdout) {
+        None => "no JSON report".to_string(),
+        Some((_, json)) => match serde_json::Deserializer::from_str(json)
+            .into_iter::<Report>()
+            .next()
+        {
+            Some(Err(error)) => format!("invalid JSON report: {error}"),
+            _ => "no JSON report".to_string(),
+        },
+    }
+}
+
+fn no_report_reason(output: &ToolOutput<'_>, problem: String) -> String {
     let said = output
         .stdout
         .lines()
@@ -84,8 +104,8 @@ fn no_report_reason(output: &ToolOutput<'_>, exit: i32) -> String {
         .map(str::trim)
         .find(|l| !l.is_empty());
     match said {
-        Some(line) => format!("oxlint exited {exit} without a JSON report: {line}"),
-        None => format!("oxlint exited {exit} without a JSON report"),
+        Some(line) => format!("oxlint exited 0 with {problem}: {}", clip(line)),
+        None => format!("oxlint exited 0 with {problem}"),
     }
 }
 
@@ -101,7 +121,7 @@ fn finding(d: Diagnostic, cwd: &str) -> ToolFinding {
         rule: rule(d.code.as_deref()),
         fix: file
             .as_deref()
-            .map(|f| format!("oxlint --fix {}", quote(f))),
+            .map(|f| format!("oxlint --fix {}", path_arg(f))),
         file,
         line: span.and_then(|s| nonzero(s.line)),
         column: span.and_then(|s| nonzero(s.column)),

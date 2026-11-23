@@ -1,4 +1,4 @@
-use super::{Outcome, ParseContext, Parsed, ToolFinding, ToolOutput, examined_files};
+use super::{Outcome, ParseContext, Parsed, ToolFinding, ToolOutput, clip, examined_files};
 use crate::report::Severity;
 
 const TAIL_LINES: usize = 20;
@@ -33,12 +33,13 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     }
 }
 
-/// The last non-blank lines of stderr then stdout, at most [`TAIL_LINES`] and [`TAIL_BYTES`].
+/// The last non-blank lines of stderr then stdout, each clipped, at most [`TAIL_LINES`] and
+/// [`TAIL_BYTES`].
 pub(super) fn tail(stderr: &str, stdout: &str) -> String {
     let lines: Vec<&str> = stderr
         .lines()
         .chain(stdout.lines())
-        .map(str::trim_end)
+        .map(|l| clip(l.trim_end()))
         .filter(|l| !l.trim().is_empty())
         .collect();
     let keep = lines.len().saturating_sub(TAIL_LINES);

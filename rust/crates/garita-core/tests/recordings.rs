@@ -96,6 +96,21 @@ const fn e(
     }
 }
 
+const UNFORMATTED: &str = "File is not formatted";
+
+/// A non-zero exit whose output the parser does not recognise: one blocking finding.
+fn unrecognized(case: &'static str, tool: &'static str, exit: i32) -> Expect {
+    let rule = match tool {
+        "oxlint" => "oxlint/unrecognized-output",
+        _ => "oxfmt/unrecognized-output",
+    };
+    let said = match exit {
+        1 => "exited with code 1",
+        _ => "exited with code 2",
+    };
+    e(case, "findings", 1, None).first(None, None, rule, said)
+}
+
 impl Expect {
     const fn first(
         mut self,
@@ -181,24 +196,24 @@ fn oxlint_recordings() {
     let table = [
         e("clean-default", "crashed", 0, None),
         e("clean-json", "clean", 0, Some(3)),
-        e("errors-two-files-default", "crashed", 0, None),
+        unrecognized("errors-two-files-default", "oxlint", 1),
         e("errors-two-files-json", "findings", 2, Some(5)).first(
             Some("packages/app/src/lint-error-2.ts"),
             Some(2),
             rule,
             DEBUGGER,
         ),
-        e("invalid-config-default", "crashed", 0, None),
-        e("invalid-config-json", "crashed", 0, None),
+        unrecognized("invalid-config-default", "oxlint", 1),
+        unrecognized("invalid-config-json", "oxlint", 1),
         e("no-files-matched-allowed-default", "crashed", 0, None),
         e("no-files-matched-allowed-json", "nothing", 0, Some(0)),
-        e("no-files-matched-default", "crashed", 0, None),
+        unrecognized("no-files-matched-default", "oxlint", 1),
         e("no-files-matched-json", "nothing", 0, Some(0)),
-        e("nonexistent-path-default", "crashed", 0, None),
+        unrecognized("nonexistent-path-default", "oxlint", 1),
         e("nonexistent-path-json", "nothing", 0, Some(0)),
-        e("one-error-default", "crashed", 0, None),
-        e("one-error-default-agent-env", "crashed", 0, None),
-        e("one-error-in-package-default", "crashed", 0, None),
+        unrecognized("one-error-default", "oxlint", 1),
+        unrecognized("one-error-default-agent-env", "oxlint", 1),
+        unrecognized("one-error-in-package-default", "oxlint", 1),
         e("one-error-in-package-json", "findings", 1, Some(4)).first(
             LINT_ERROR,
             Some(2),
@@ -250,12 +265,14 @@ fn oxlint_recorded_finding_in_full() {
         stderr: &invalid.stderr,
         exit_code: invalid.exit_code,
     };
-    let Outcome::Crashed { reason } = Adapter::Oxlint.parse(&output, &context).outcome else {
-        panic!("a bad config must crash");
-    };
+    let parsed = Adapter::Oxlint.parse(&output, &context);
+    assert_eq!(parsed.outcome, Outcome::Findings, "a bad config must block");
+    let message = &parsed.findings[0].message;
     assert!(
-        reason.contains("Failed to parse oxlint configuration file."),
-        "{reason}"
+        message.starts_with("oxlint exited with code 1")
+            && message.contains("Failed to parse oxlint configuration file.")
+            && message.contains("EOF while parsing a value"),
+        "{message}"
     );
 }
 
@@ -270,10 +287,15 @@ fn oxfmt_recordings() {
         e("check-no-files-matched", "nothing", 0, Some(0)),
         e("check-no-files-matched-allowed", "nothing", 0, Some(0)),
         e("check-nonexistent-path", "nothing", 0, Some(0)),
-        e("check-one-unformatted", "findings", 1, Some(4)).first(bad, None, rule, ""),
-        e("check-one-unformatted-in-package", "findings", 1, Some(4)).first(bad, None, rule, ""),
-        e("check-syntax-error", "crashed", 0, None),
-        e("check-two-unformatted", "findings", 2, Some(5)).first(bad2, None, rule, ""),
+        e("check-one-unformatted", "findings", 1, Some(4)).first(bad, None, rule, UNFORMATTED),
+        e("check-one-unformatted-in-package", "findings", 1, Some(4)).first(
+            bad,
+            None,
+            rule,
+            UNFORMATTED,
+        ),
+        unrecognized("check-syntax-error", "oxfmt", 2),
+        e("check-two-unformatted", "findings", 2, Some(5)).first(bad2, None, rule, UNFORMATTED),
         e("check-unknown-file-type-explicit", "nothing", 0, Some(0)),
         e("check-unknown-file-type-in-dir", "clean", 0, Some(3)),
         e("list-different-formatted", "clean", 0, None),
@@ -286,16 +308,26 @@ fn oxfmt_recordings() {
             Some(0),
         ),
         e("list-different-nonexistent-path", "nothing", 0, Some(0)),
-        e("list-different-one-unformatted", "findings", 1, None).first(bad, None, rule, ""),
+        e("list-different-one-unformatted", "findings", 1, None).first(
+            bad,
+            None,
+            rule,
+            UNFORMATTED,
+        ),
         e(
             "list-different-one-unformatted-in-package",
             "findings",
             1,
             None,
         )
-        .first(bad, None, rule, ""),
-        e("list-different-syntax-error", "crashed", 0, None),
-        e("list-different-two-unformatted", "findings", 2, None).first(bad2, None, rule, ""),
+        .first(bad, None, rule, UNFORMATTED),
+        unrecognized("list-different-syntax-error", "oxfmt", 2),
+        e("list-different-two-unformatted", "findings", 2, None).first(
+            bad2,
+            None,
+            rule,
+            UNFORMATTED,
+        ),
         e(
             "list-different-unknown-file-type-explicit",
             "nothing",
@@ -603,12 +635,19 @@ fn turbo_type_check_tasks_parse_per_package() {
 }
 
 #[test]
-fn turbo_lint_logs_in_the_default_format_crash() {
+fn turbo_lint_logs_in_the_default_format_never_pass() {
     let case = "lint-check-summarize";
     let summary =
         turbo::parse_summary(&read(&root().join(TURBO).join(case).join("summary.json"))).unwrap();
     for task in &summary.tasks {
         let parsed = parse_task_log(case, task, Adapter::Oxlint);
-        assert_eq!(parsed.outcome.name(), "crashed", "{}", task.task_id);
+        let expected = match task.exit_code {
+            Some(0) => "crashed",
+            _ => "findings",
+        };
+        assert_eq!(parsed.outcome.name(), expected, "{}", task.task_id);
+        if expected == "findings" {
+            assert_eq!(parsed.findings[0].rule, "oxlint/unrecognized-output");
+        }
     }
 }

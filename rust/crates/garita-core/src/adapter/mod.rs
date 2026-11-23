@@ -1,9 +1,11 @@
 //! The pure `parse` half of the built-in adapters (RFC-2 §1, §3).
 
+use std::borrow::Cow;
 use std::num::NonZeroU64;
 
 use thiserror::Error;
 
+use crate::argv::quote;
 use crate::report::{CheckKind, Examined, Finding, Severity};
 
 mod exit_code;
@@ -122,6 +124,29 @@ impl Parsed {
         Self::crashed("the tool was killed or did not exit normally")
     }
 
+    /// A non-zero exit the parser could not read still blocks: the tool gave its own verdict.
+    fn unrecognized(tool: &str, exit: i32, output: &ToolOutput<'_>) -> Self {
+        let tail = exit_code::tail(output.stderr, output.stdout);
+        let message = if tail.is_empty() {
+            format!("{tool} exited with code {exit} and printed nothing")
+        } else {
+            format!("{tool} exited with code {exit} with output garita does not recognise:\n{tail}")
+        };
+        Self {
+            outcome: Outcome::Findings,
+            findings: vec![ToolFinding {
+                severity: Severity::Error,
+                rule: format!("{tool}/unrecognized-output"),
+                file: None,
+                line: None,
+                column: None,
+                message,
+                fix: None,
+            }],
+            examined: Examined::new(),
+        }
+    }
+
     /// `Findings` when there are any, else `Nothing` for zero files, else `Clean`.
     fn from_findings(findings: Vec<ToolFinding>, files: Option<u64>) -> Self {
         let outcome = if !findings.is_empty() {
@@ -143,6 +168,60 @@ fn examined_files(files: Option<u64>) -> Examined {
     files
         .map(|n| Examined::from([(FILES.to_string(), n)]))
         .unwrap_or_default()
+}
+
+const LINE_CAP: usize = 300;
+
+/// At most [`LINE_CAP`] bytes of `text`, cut on a character boundary.
+fn clip(text: &str) -> &str {
+    let mut end = text.len().min(LINE_CAP);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end).unwrap_or_default()
+}
+
+/// A repository path as a command argument: `./` keeps a leading `-` from reading as an option.
+fn path_arg(file: &str) -> String {
+    if file.starts_with('-') {
+        quote(&format!("./{file}"))
+    } else {
+        quote(file)
+    }
+}
+
+/// Removes ANSI escape sequences: CSI (`ESC [ ... final`), OSC (`ESC ] ... BEL` or `ESC \`),
+/// and any other two-byte `ESC x`.
+pub fn strip_ansi(text: &str) -> Cow<'_, str> {
+    if !text.contains('\u{1b}') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Cow::Owned(out)
 }
 
 fn nonzero(n: u64) -> Option<NonZeroU64> {
@@ -200,6 +279,13 @@ impl Adapter {
     }
 
     pub fn parse(self, output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
+        let stdout = strip_ansi(output.stdout);
+        let stderr = strip_ansi(output.stderr);
+        let output = &ToolOutput {
+            stdout: &stdout,
+            stderr: &stderr,
+            exit_code: output.exit_code,
+        };
         match self {
             Adapter::Oxlint => oxlint::parse(output, context),
             Adapter::Oxfmt => oxfmt::parse(output, context),

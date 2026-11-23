@@ -131,8 +131,62 @@ fn oxlint_rebases_and_fixes() {
     assert_eq!(finding.message, "m");
 }
 
+/// The single finding a non-zero exit with unreadable output gives.
+fn assert_unrecognized(parsed: &Parsed, tool: &str, exit: i32) {
+    assert_eq!(parsed.outcome, Outcome::Findings, "{tool}");
+    assert_eq!(parsed.findings.len(), 1, "{tool}");
+    let finding = &parsed.findings[0];
+    assert_eq!(finding.rule, format!("{tool}/unrecognized-output"));
+    assert_eq!(finding.severity, Severity::Error);
+    assert_eq!(finding.file, None);
+    assert!(
+        finding
+            .message
+            .starts_with(&format!("{tool} exited with code {exit}")),
+        "{}",
+        finding.message
+    );
+}
+
 #[test]
-fn oxlint_hostile_input_crashes() {
+fn every_parser_blocks_on_a_failed_exit_with_empty_output() {
+    for (adapter, tool) in [
+        (Adapter::Oxlint, "oxlint"),
+        (Adapter::Oxfmt, "oxfmt"),
+        (Adapter::Tsc, "tsc"),
+    ] {
+        let parsed = run(adapter, "", "", Some(1));
+        assert_unrecognized(&parsed, tool, 1);
+        assert_eq!(
+            parsed.findings[0].message,
+            format!("{tool} exited with code 1 and printed nothing")
+        );
+    }
+    let parsed = run(Adapter::ExitCode, "", "", Some(1));
+    assert_eq!(parsed.findings[0].rule, "exit-code/failed");
+}
+
+#[test]
+fn every_parser_crashes_when_killed() {
+    for adapter in Adapter::ALL {
+        let parsed = run(adapter, "anything", "", None);
+        assert!(crashed(&parsed), "{}", adapter.name());
+        assert!(parsed.findings.is_empty());
+    }
+}
+
+#[test]
+fn unrecognized_message_keeps_a_clipped_tail() {
+    let stdout = format!("{}\nlast words\n", "é".repeat(1_000_000));
+    let parsed = run(Adapter::Tsc, &stdout, "", Some(2));
+    assert_unrecognized(&parsed, "tsc", 2);
+    let message = &parsed.findings[0].message;
+    assert!(message.ends_with("\nlast words"), "{message}");
+    assert!(message.len() < 400, "{}", message.len());
+}
+
+#[test]
+fn oxlint_unreadable_output() {
     for stdout in [
         "",
         "{",
@@ -145,14 +199,13 @@ fn oxlint_hostile_input_crashes() {
             crashed(&run(Adapter::Oxlint, stdout, "", Some(0))),
             "{stdout:?}"
         );
-        assert!(
-            crashed(&run(Adapter::Oxlint, stdout, "", Some(1))),
-            "{stdout:?}"
-        );
+        assert_unrecognized(&run(Adapter::Oxlint, stdout, "", Some(1)), "oxlint", 1);
     }
     let clean = r#"{"diagnostics":[],"number_of_files":2}"#;
     assert!(crashed(&run(Adapter::Oxlint, clean, "", None)));
-    assert!(crashed(&run(Adapter::Oxlint, clean, "", Some(1))));
+    let silent_failure = run(Adapter::Oxlint, clean, "", Some(1));
+    assert_unrecognized(&silent_failure, "oxlint", 1);
+    assert_eq!(silent_failure.examined.get(FILES), Some(&2));
     assert_eq!(
         run(Adapter::Oxlint, clean, "", Some(0)).outcome,
         Outcome::Clean
@@ -162,6 +215,64 @@ fn oxlint_hostile_input_crashes() {
         run(Adapter::Oxlint, crlf, "", Some(1)).outcome,
         Outcome::Nothing
     );
+}
+
+const ONE_DIAGNOSTIC: &str = r#"{"diagnostics":[{"message":"m","code":"eslint(no-debugger)","severity":"error","filename":"src/a.ts","labels":[{"span":{"line":4,"column":2}}]}],"number_of_files":3}"#;
+
+#[test]
+fn oxlint_reads_only_the_first_json_value() {
+    for after in [
+        "\nFinished in 4ms.\n",
+        "\n{\"another\": 1}\n",
+        "{not json",
+        "\n}",
+    ] {
+        let stdout = format!("{ONE_DIAGNOSTIC}{after}");
+        let parsed = run(Adapter::Oxlint, &stdout, "", Some(1));
+        assert_eq!(parsed.outcome, Outcome::Findings, "{after:?}");
+        assert_eq!(parsed.findings.len(), 1);
+        assert_eq!(parsed.examined.get(FILES), Some(&3));
+    }
+}
+
+#[test]
+fn oxlint_diagnostics_win_over_no_files_prose() {
+    let stdout = format!(
+        "No files found to lint. Please check your paths and ignore patterns.\n{ONE_DIAGNOSTIC}"
+    );
+    let parsed = run(Adapter::Oxlint, &stdout, "", Some(1));
+    assert_eq!(parsed.outcome, Outcome::Findings);
+    assert_eq!(parsed.findings[0].file.as_deref(), Some("src/a.ts"));
+}
+
+#[test]
+fn oxlint_ansi_coloured_output() {
+    let stdout = format!(
+        "\u{1b}[33mNo files\u{1b}[0m?\n\u{1b}]8;;https://x\u{7}\u{1b}[1m{ONE_DIAGNOSTIC}\u{1b}[0m\n"
+    );
+    let parsed = run(Adapter::Oxlint, &stdout, "", Some(1));
+    assert_eq!(parsed.outcome, Outcome::Findings);
+    assert_eq!(parsed.findings[0].rule, "oxlint/eslint/no-debugger");
+    assert_eq!(parsed.findings[0].line, NonZeroU64::new(4));
+}
+
+#[test]
+fn fix_commands_guard_a_leading_dash() {
+    let json = r#"{"diagnostics":[{"message":"m","code":"eslint(x)","severity":"error","filename":"-rf.ts","labels":[]}],"number_of_files":1}"#;
+    let lint = run(Adapter::Oxlint, json, "", Some(1));
+    assert_eq!(lint.findings[0].file.as_deref(), Some("-rf.ts"));
+    assert_eq!(
+        lint.findings[0].fix.as_deref(),
+        Some("oxlint --fix ./-rf.ts")
+    );
+    let format = run(Adapter::Oxfmt, "--write me.ts\n", "", Some(1));
+    assert_eq!(format.findings[0].file.as_deref(), Some("--write me.ts"));
+    assert_eq!(
+        format.findings[0].fix.as_deref(),
+        Some("oxfmt './--write me.ts'")
+    );
+    let inside = run(Adapter::Oxfmt, "src/-a.ts\n", "", Some(1));
+    assert_eq!(inside.findings[0].fix.as_deref(), Some("oxfmt src/-a.ts"));
 }
 
 #[test]
@@ -198,17 +309,27 @@ fn oxfmt_duration_and_counts() {
 }
 
 #[test]
-fn oxfmt_count_mismatch_and_garbage_crash() {
+fn oxfmt_unreadable_output() {
     let stdout = "Checking formatting...\n\na.ts (0ms)\n\nFormat issues found in above 3 files.\n";
-    assert!(crashed(&run(Adapter::Oxfmt, stdout, "", Some(1))));
+    assert_unrecognized(&run(Adapter::Oxfmt, stdout, "", Some(1)), "oxfmt", 1);
     let truncated = "Checking formatting...\n\na.ts (0ms)\n";
-    assert!(crashed(&run(Adapter::Oxfmt, truncated, "", Some(1))));
-    assert!(crashed(&run(Adapter::Oxfmt, "", "", Some(1))));
-    assert!(crashed(&run(Adapter::Oxfmt, "", "", None)));
+    assert_unrecognized(&run(Adapter::Oxfmt, truncated, "", Some(1)), "oxfmt", 1);
     assert!(crashed(&run(Adapter::Oxfmt, "\u{0}\u{7f}", "", Some(0))));
+    assert!(crashed(&run(
+        Adapter::Oxfmt,
+        "Checking formatting...\n",
+        "",
+        Some(0)
+    )));
     assert_eq!(run(Adapter::Oxfmt, "", "", Some(0)).outcome, Outcome::Clean);
     let big = "x".repeat(5_000_000);
-    assert!(crashed(&run(Adapter::Oxfmt, &big, &big, Some(2))));
+    let parsed = run(Adapter::Oxfmt, &big, &big, Some(2));
+    assert_unrecognized(&parsed, "oxfmt", 2);
+    assert!(parsed.findings[0].message.len() < 1000);
+    let Outcome::Crashed { reason } = run(Adapter::Oxfmt, &big, "", Some(0)).outcome else {
+        panic!("exit 0 with garbage must crash");
+    };
+    assert!(reason.len() < 400, "{}", reason.len());
 }
 
 #[test]
@@ -227,6 +348,66 @@ fn tsc_hostile_lines() {
         "Cannot find name 'x'.\n  first\n    second"
     );
     assert_eq!(finding.fix, None);
+}
+
+const PRETTY: &str = "\u{1b}[96msrc/a b.ts\u{1b}[0m:\u{1b}[93m1\u{1b}[0m:\u{1b}[93m14\u{1b}[0m - \u{1b}[91merror\u{1b}[0m\u{1b}[90m TS2322: \u{1b}[0mType 'string' is not assignable to type 'number'.
+
+\u{1b}[7m1\u{1b}[0m export const x: number = \"a\";
+\u{1b}[7m \u{1b}[0m \u{1b}[91m             ~\u{1b}[0m
+
+src/b.ts:5:3 - error TS2304: Cannot find name 'y'.
+  The name is missing.
+
+5   y;
+    ~
+
+Found 2 errors in 2 files.
+
+Errors  Files
+     1  src/a b.ts\u{1b}[90m:1\u{1b}[0m
+     1  src/b.ts\u{1b}[90m:5\u{1b}[0m
+";
+
+#[test]
+fn tsc_pretty_format_with_colours() {
+    let context = ParseContext {
+        cwd: "packages/app",
+        files: None,
+    };
+    let output = ToolOutput {
+        stdout: PRETTY,
+        stderr: "",
+        exit_code: Some(2),
+    };
+    let parsed = Adapter::Tsc.parse(&output, &context);
+    assert_eq!(parsed.outcome, Outcome::Findings);
+    assert_eq!(parsed.findings.len(), 2);
+    let first = &parsed.findings[0];
+    assert_eq!(first.file.as_deref(), Some("packages/app/src/a b.ts"));
+    assert_eq!(
+        (first.line, first.column),
+        (NonZeroU64::new(1), NonZeroU64::new(14))
+    );
+    assert_eq!(first.rule, "tsc/TS2322");
+    assert_eq!(
+        first.message,
+        "Type 'string' is not assignable to type 'number'."
+    );
+    let second = &parsed.findings[1];
+    assert_eq!(second.file.as_deref(), Some("packages/app/src/b.ts"));
+    assert_eq!(second.line, NonZeroU64::new(5));
+    assert_eq!(
+        second.message,
+        "Cannot find name 'y'.\n  The name is missing."
+    );
+}
+
+#[test]
+fn tsc_plain_format_with_colours() {
+    let stdout = "\u{1b}[31msrc/a.ts(2,3): error TS1005: ';' expected.\u{1b}[0m\n";
+    let parsed = run(Adapter::Tsc, stdout, "", Some(1));
+    assert_eq!(parsed.findings[0].file.as_deref(), Some("src/a.ts"));
+    assert_eq!(parsed.findings[0].message, "';' expected.");
 }
 
 #[test]
@@ -261,9 +442,7 @@ fn tsc_severity_words_and_examined() {
 fn tsc_hostile_input() {
     assert_eq!(run(Adapter::Tsc, "", "", Some(0)).outcome, Outcome::Clean);
     assert!(run(Adapter::Tsc, "", "", Some(0)).examined.is_empty());
-    assert!(crashed(&run(Adapter::Tsc, "", "", Some(1))));
-    assert!(crashed(&run(Adapter::Tsc, "\u{0}garbage", "", Some(2))));
-    assert!(crashed(&run(Adapter::Tsc, "", "", None)));
+    assert_unrecognized(&run(Adapter::Tsc, "\u{0}garbage", "", Some(2)), "tsc", 2);
     assert!(crashed(&run(
         Adapter::Tsc,
         "a.ts(1,1): error TS1: x",
@@ -276,6 +455,33 @@ fn tsc_hostile_input() {
     assert_eq!(parsed.findings.len(), 5_000_000 / line.len() + 1);
     let huge_line = format!("{}(1,1): error TS1: x", "(".repeat(5_000_000));
     assert_eq!(run(Adapter::Tsc, &huge_line, "", Some(2)).findings.len(), 1);
+}
+
+#[test]
+fn tsc_adversarial_line_is_linear() {
+    for unit in [
+        "): ",
+        "(1,1): error TS",
+        "error TS1",
+        ":1:1 - error TS9x",
+        "1",
+    ] {
+        let line = format!("{}\n", unit.repeat(5_000_000 / unit.len()));
+        let started = std::time::Instant::now();
+        let parsed = run(Adapter::Tsc, &line, "", Some(2));
+        let took = started.elapsed();
+        assert!(took.as_secs() < 5, "{unit:?} took {took:?}");
+        assert_eq!(parsed.findings.len(), 1, "{unit:?}");
+    }
+}
+
+#[test]
+fn strip_ansi_sequences() {
+    assert_eq!(strip_ansi("plain"), "plain");
+    assert_eq!(strip_ansi("\u{1b}[1;31mred\u{1b}[0m"), "red");
+    assert_eq!(strip_ansi("a\u{1b}]8;;http://x\u{1b}\\b"), "ab");
+    assert_eq!(strip_ansi("a\u{1b}(Bb\u{1b}"), "aBb");
+    assert_eq!(strip_ansi("x\u{1b}[12;"), "x");
 }
 
 #[test]

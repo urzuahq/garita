@@ -1,5 +1,4 @@
-use super::{ParseContext, Parsed, ToolFinding, ToolOutput, rebase};
-use crate::argv::quote;
+use super::{ParseContext, Parsed, ToolFinding, ToolOutput, clip, path_arg, rebase};
 use crate::report::Severity;
 
 const HEADER: &str = "Checking formatting...";
@@ -37,7 +36,7 @@ fn parse_check(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -
     }
     let issues = lines.iter().position(|l| l.starts_with(ISSUES));
     let (Some(end), 1) = (issues, exit) else {
-        return Parsed::crashed(crash_reason(output, exit));
+        return unreadable(output, exit);
     };
     let start = lines.iter().position(|l| *l == HEADER).map_or(0, |i| i + 1);
     let listed: Vec<&str> = lines
@@ -52,11 +51,7 @@ fn parse_check(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -
         .and_then(|l| l.strip_prefix(ISSUES))
         .and_then(leading_number);
     if listed.is_empty() || stated != Some(listed.len() as u64) {
-        return Parsed::crashed(format!(
-            "oxfmt listed {} files but said {}",
-            listed.len(),
-            stated.map_or("no count".to_string(), |n| n.to_string())
-        ));
+        return Parsed::unrecognized("oxfmt", exit, output);
     }
     Parsed::from_findings(findings(&listed, context.cwd), files)
 }
@@ -78,7 +73,7 @@ fn parse_list(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) ->
     match (exit, listed.is_empty()) {
         (0, true) => Parsed::from_findings(Vec::new(), files),
         (1, false) => Parsed::from_findings(findings(&listed, context.cwd), files),
-        _ => Parsed::crashed(crash_reason(output, exit)),
+        _ => unreadable(output, exit),
     }
 }
 
@@ -90,7 +85,7 @@ fn findings(listed: &[&str], cwd: &str) -> Vec<ToolFinding> {
             ToolFinding {
                 severity: Severity::Error,
                 rule: "oxfmt/unformatted".to_string(),
-                fix: Some(format!("oxfmt {}", quote(&file))),
+                fix: Some(format!("oxfmt {}", path_arg(&file))),
                 file: Some(file),
                 line: None,
                 column: None,
@@ -100,7 +95,16 @@ fn findings(listed: &[&str], cwd: &str) -> Vec<ToolFinding> {
         .collect()
 }
 
-fn crash_reason(output: &ToolOutput<'_>, exit: i32) -> String {
+/// Exit 0 with output that should have parsed is a crash; any other exit is the tool's verdict.
+fn unreadable(output: &ToolOutput<'_>, exit: i32) -> Parsed {
+    if exit == 0 {
+        Parsed::crashed(crash_reason(output))
+    } else {
+        Parsed::unrecognized("oxfmt", exit, output)
+    }
+}
+
+fn crash_reason(output: &ToolOutput<'_>) -> String {
     let said = output
         .stderr
         .lines()
@@ -109,8 +113,11 @@ fn crash_reason(output: &ToolOutput<'_>, exit: i32) -> String {
         .filter(|l| !l.is_empty() && *l != HEADER)
         .next_back();
     match said {
-        Some(line) => format!("oxfmt exited {exit}: {line}"),
-        None => format!("oxfmt exited {exit} without a result"),
+        Some(line) => format!(
+            "oxfmt exited 0 with output garita does not recognise: {}",
+            clip(line)
+        ),
+        None => "oxfmt exited 0 without a result".to_string(),
     }
 }
 

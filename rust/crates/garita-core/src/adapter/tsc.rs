@@ -1,7 +1,7 @@
 use super::{ParseContext, Parsed, ToolFinding, ToolOutput, nonzero, rebase};
 use crate::report::Severity;
 
-/// Parses `--pretty false` diagnostics from TypeScript 5.x and the native compiler.
+/// Parses diagnostics from TypeScript 5.x and the native compiler, plain or pretty.
 pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     let Some(exit) = output.exit_code else {
         return Parsed::killed();
@@ -22,50 +22,80 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
         }
     }
     if findings.is_empty() && exit != 0 {
-        return Parsed::crashed(crash_reason(output, exit));
+        return Parsed::unrecognized("tsc", exit, output);
     }
     Parsed::from_findings(findings, context.files)
 }
 
-fn crash_reason(output: &ToolOutput<'_>, exit: i32) -> String {
-    let said = output
-        .stdout
-        .lines()
-        .chain(output.stderr.lines())
-        .map(str::trim)
-        .find(|l| !l.is_empty());
-    match said {
-        Some(line) => format!("tsc exited {exit} without a diagnostic: {line}"),
-        None => format!("tsc exited {exit} without a diagnostic"),
-    }
-}
+const WORDS: [(&str, Severity); 4] = [
+    ("error ", Severity::Error),
+    ("warning ", Severity::Warning),
+    ("message ", Severity::Info),
+    ("suggestion ", Severity::Info),
+];
 
-/// `path(line,col): error TSnnnn: message`, or the file-less `error TSnnnn: message`.
+/// One diagnostic line in any of its forms:
+/// `path(line,col): error TSnnnn: message` (`--pretty false`),
+/// `path:line:col - error TSnnnn: message` (pretty), or `error TSnnnn: message` (no file).
+/// Each `TS` in the line is tried once and checked only against the text next to it, so a
+/// line is matched in linear time.
 fn diagnostic(line: &str, cwd: &str) -> Option<ToolFinding> {
     let line = line.trim_end();
-    if let Some(head) = head(line) {
-        return Some(head.finding(None, None, None));
-    }
-    let mut search = 0;
-    while let Some(found) = line.get(search..)?.find("): ") {
-        let close = search + found;
-        let rest = line.get(close + 3..)?;
-        if let (Some((path, row, col)), Some(head)) = (location(line.get(..close)?), head(rest)) {
+    for (at, _) in line.match_indices("TS") {
+        let before = line.get(..at)?;
+        let Some((word, severity)) = WORDS.iter().find(|(w, _)| before.ends_with(w)) else {
+            continue;
+        };
+        let Some((code, message)) = code_and_message(line.get(at + 2..)?) else {
+            continue;
+        };
+        let prefix = before.get(..before.len() - word.len())?;
+        let head = Head {
+            severity: *severity,
+            code,
+            message,
+        };
+        if prefix.is_empty() {
+            return Some(head.finding(None, None, None));
+        }
+        if let Some((path, row, col)) = location(prefix) {
             return Some(head.finding(Some(rebase(cwd, path)), nonzero(row), nonzero(col)));
         }
-        search = close + 3;
     }
     None
 }
 
-/// Splits `path(12,5` into the path and its position.
-fn location(text: &str) -> Option<(&str, u64, u64)> {
-    let (path, position) = text.rsplit_once('(')?;
-    let (row, col) = position.split_once(',')?;
-    if path.is_empty() || !all_digits(row) || !all_digits(col) {
+/// `2322: message` after `TS`; only the digits and the `: ` after them are read.
+fn code_and_message(text: &str) -> Option<(&str, &str)> {
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    let code = text.get(..digits)?;
+    let message = text.get(digits..)?.strip_prefix(": ")?;
+    (!code.is_empty()).then_some((code, message))
+}
+
+/// `path(12,5): ` or `path:12:5 - `, read backwards over the digits only.
+fn location(prefix: &str) -> Option<(&str, u64, u64)> {
+    if let Some(rest) = prefix.strip_suffix("): ") {
+        let (rest, col) = trailing_number(rest)?;
+        let (rest, row) = trailing_number(rest.strip_suffix(',')?)?;
+        let path = rest.strip_suffix('(')?;
+        return (!path.is_empty()).then_some((path, row, col));
+    }
+    let rest = prefix.strip_suffix(" - ")?;
+    let (rest, col) = trailing_number(rest)?;
+    let (rest, row) = trailing_number(rest.strip_suffix(':')?)?;
+    let path = rest.strip_suffix(':')?;
+    (!path.is_empty()).then_some((path, row, col))
+}
+
+fn trailing_number(text: &str) -> Option<(&str, u64)> {
+    let digits = text.bytes().rev().take_while(u8::is_ascii_digit).count();
+    let split = text.len() - digits;
+    let number = text.get(split..)?;
+    if number.is_empty() || digits > 19 {
         return None;
     }
-    Some((path, row.parse().ok()?, col.parse().ok()?))
+    Some((text.get(..split)?, number.parse().ok()?))
 }
 
 struct Head<'a> {
@@ -91,30 +121,6 @@ impl Head<'_> {
             fix: None,
         }
     }
-}
-
-/// `error TS2322: message`.
-fn head(text: &str) -> Option<Head<'_>> {
-    let (word, rest) = text.split_once(' ')?;
-    let severity = match word {
-        "error" => Severity::Error,
-        "warning" => Severity::Warning,
-        "message" | "suggestion" => Severity::Info,
-        _ => return None,
-    };
-    let (code, message) = rest.strip_prefix("TS")?.split_once(": ")?;
-    if !all_digits(code) {
-        return None;
-    }
-    Some(Head {
-        severity,
-        code,
-        message,
-    })
-}
-
-fn all_digits(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Counts the files in `--listFilesOnly` output, leaving out the compiler's own library: a
