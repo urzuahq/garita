@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use garita_core::describe::{CONTRACT_VERSION, describe};
 use garita_core::receipt::{RECEIPT_VERSION, Receipt, ReceiptCheck, ResultWord, Tool};
 use garita_core::report::{
     CheckEntry, CheckKind, CheckStatus, Finding, Report, RunContext, Scope, ScopeKind, Severity,
@@ -49,7 +50,7 @@ fn entry(name: &str, kind: CheckKind, status: CheckStatus, files: u64) -> CheckE
 
 fn finding(check: &str, severity: Severity, file: Option<&str>, line: Option<u64>) -> Finding {
     Finding {
-        check: check.into(),
+        check: Some(check.into()),
         severity,
         rule: format!("{check}/rule"),
         file: file.map(Into::into),
@@ -117,6 +118,17 @@ fn mixed_not_run_report() -> Report {
         Some(3),
     )];
     Report::from_run(context(false), checks, findings, None)
+}
+
+fn about_the_run_report() -> Report {
+    let checks = vec![entry("lint", CheckKind::Lint, CheckStatus::Pass, 38)];
+    let findings = vec![Finding {
+        check: None,
+        rule: "scope-widened".into(),
+        message: "no base ref was found, so the scope is every file".into(),
+        ..finding("lint", Severity::Info, None, None)
+    }];
+    Report::from_run(context(true), checks, findings, None)
 }
 
 fn no_location_report() -> Report {
@@ -198,20 +210,30 @@ fn cases() -> Vec<(&'static str, serde_json::Value)> {
     let not_run = not_run_report();
     let not_run_receipt = receipt(ResultWord::from(not_run.status), Vec::new(), not_run);
     vec![
-        ("gate-report.pass", json(pass_report())),
-        ("gate-report.warn", json(warn_report())),
-        ("gate-report.fail", json(fail_report())),
-        ("gate-report.not-run-no-start", json(not_run_report())),
-        ("gate-report.not-run-mixed", json(mixed_not_run_report())),
+        ("run-report.pass", json(pass_report())),
+        ("run-report.warn", json(warn_report())),
+        ("run-report.fail", json(fail_report())),
         (
-            "gate-report.finding-no-location",
-            json(no_location_report()),
+            "run-report.finding-about-the-run",
+            json(about_the_run_report()),
         ),
+        ("run-report.not-run-no-start", json(not_run_report())),
+        ("run-report.not-run-mixed", json(mixed_not_run_report())),
+        ("run-report.finding-no-location", json(no_location_report())),
+        ("describe.garita", json(describe("0.0.0"))),
         ("receipt.fail", json(fail_receipt)),
         ("receipt.not-run-mixed", json(mixed_receipt)),
         ("receipt.not-run", json(not_run_receipt)),
     ]
 }
+
+/// Goldens that the garita-cli tests write and compare, from the real command output.
+const WRITTEN_BY_THE_CLI: &[&str] = &[
+    "run-report.doctor-not-run.json",
+    "run-report.doctor-pass.json",
+    "run-report.hooks-install.json",
+    "run-report.hooks-uninstall.json",
+];
 
 #[test]
 fn examples_match_what_the_types_serialize() {
@@ -238,6 +260,7 @@ fn examples_match_what_the_types_serialize() {
     let on_disk: BTreeSet<String> = fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|name| !WRITTEN_BY_THE_CLI.contains(&name.as_str()))
         .collect();
     if update {
         for stale in on_disk.difference(&produced) {
@@ -270,4 +293,42 @@ fn a_receipt_and_its_report_agree_on_every_check() {
             );
         }
     }
+}
+
+#[test]
+fn a_finding_names_a_check_that_the_report_lists() {
+    let mut seen = 0;
+    for (name, value) in cases() {
+        let report = if name.starts_with("receipt.") {
+            &value["report"]
+        } else if name.starts_with("run-report.") {
+            &value
+        } else {
+            continue;
+        };
+        let names: Vec<&serde_json::Value> = report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| &c["name"])
+            .collect();
+        for f in report["findings"].as_array().unwrap() {
+            if let Some(check) = f.get("check") {
+                seen += 1;
+                assert!(names.contains(&check), "{name}: {f}");
+            }
+        }
+    }
+    assert!(seen > 0);
+}
+
+#[test]
+fn describe_declares_the_vendored_contract_version() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/contract/VERSION");
+    let text = fs::read_to_string(path).unwrap();
+    let tag = text.split_whitespace().next().unwrap();
+    let release = tag.trim_start_matches('v');
+    let mut parts = release.split('.');
+    let major_minor = format!("{}.{}", parts.next().unwrap(), parts.next().unwrap());
+    assert_eq!(CONTRACT_VERSION, major_minor);
 }

@@ -88,6 +88,31 @@ impl Sandbox {
         report
     }
 
+    /// Compares a command's stdout with `run-report.<name>.json`, which the contract check
+    /// validates; the sandbox path and the fingerprints that hash it are normalised.
+    /// `GARITA_UPDATE_GOLDEN=1` rewrites the file.
+    fn golden(&self, name: &str, out: &Output) {
+        let stdout = String::from_utf8(out.stdout.clone()).unwrap();
+        let text = stdout.replace(self.repo().to_str().unwrap(), "/repo");
+        let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        for f in value["findings"].as_array_mut().unwrap() {
+            if f.get("fingerprint").is_some() {
+                f["fingerprint"] = "0123456789abcdef".into();
+            }
+        }
+        let text = format!("{}\n", serde_json::to_string_pretty(&value).unwrap());
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../garita-core/tests/contract/examples/run-report.{name}.json"
+        ));
+        if std::env::var("GARITA_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+            fs::write(&path, &text).unwrap();
+        } else {
+            let golden = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("golden {name} is missing: {e}"));
+            assert_eq!(golden, text, "golden {name} differs");
+        }
+    }
+
     fn commit(&self, file: &str) -> Output {
         self.write(file, "x\n");
         self.git(&["add", file]).assert_ok();
@@ -144,6 +169,12 @@ fn report_of(out: &Output) -> Report {
     if report.status == RunStatus::NotRun {
         assert!(report.error.is_some());
     }
+    assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
+    for f in &report.findings {
+        if let Some(check) = &f.check {
+            assert!(report.checks.iter().any(|c| &c.name == check), "{check}");
+        }
+    }
     report
 }
 
@@ -154,11 +185,8 @@ fn the_installed_pre_commit_hook_rejects_a_failing_commit_and_accepts_a_passing_
     s.install();
     let out = s.commit("a.ts");
     assert!(!out.status.success());
-    assert!(
-        stderr(&out).contains("garita: fail at commit"),
-        "{}",
-        stderr(&out)
-    );
+    let shown = format!("{}{}", stderr(&out), String::from_utf8_lossy(&out.stdout));
+    assert!(shown.contains("\"status\":\"fail\""), "{shown}");
     assert_eq!(s.commits(), 0);
     s.lint_exits(0);
     s.commit("a.ts").assert_ok();
@@ -212,11 +240,7 @@ fn doctor_prints_one_report_and_exits_2_without_a_config() {
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(2));
     assert!(report.error.unwrap().contains("config.yaml"));
-    assert!(
-        stderr(&out).starts_with("garita doctor: not-run"),
-        "{}",
-        stderr(&out)
-    );
+    s.golden("doctor-not-run", &out);
 }
 
 #[test]
@@ -228,4 +252,17 @@ fn doctor_passes_once_hooks_and_config_are_in_place() {
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(report.examined.get("hooks"), Some(&2));
+    s.golden("doctor-pass", &out);
+}
+
+#[test]
+fn hooks_install_and_uninstall_reports_match_their_goldens() {
+    let s = Sandbox::new(true);
+    s.lint_exits(0);
+    let out = s.garita(&["hooks", "install"]);
+    assert_eq!(report_of(&out).status, RunStatus::Pass);
+    s.golden("hooks-install", &out);
+    let out = s.garita(&["hooks", "uninstall"]);
+    assert_eq!(report_of(&out).status, RunStatus::Pass);
+    s.golden("hooks-uninstall", &out);
 }

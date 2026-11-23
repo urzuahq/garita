@@ -3,20 +3,30 @@ use std::time::Duration;
 use garita_core::adapter::ToolFinding;
 use garita_core::report::{Finding, Severity};
 
-/// The pseudo-check that owns findings about the run itself.
-pub const GARITA: &str = "garita";
-
 pub fn finding(check: &str, severity: Severity, rule: &str, message: String) -> Finding {
-    file_finding(check, severity, rule, None, message)
+    tool_finding(severity, rule, None, message).into_finding(check)
 }
 
-pub fn file_finding(
-    check: &str,
+/// A finding about the run itself, which carries no check.
+pub fn run_finding(severity: Severity, rule: &str, message: String) -> Finding {
+    tool_finding(severity, rule, None, message).into_run_finding()
+}
+
+pub fn run_file_finding(
     severity: Severity,
     rule: &str,
     file: Option<String>,
     message: String,
 ) -> Finding {
+    tool_finding(severity, rule, file, message).into_run_finding()
+}
+
+fn tool_finding(
+    severity: Severity,
+    rule: &str,
+    file: Option<String>,
+    message: String,
+) -> ToolFinding {
     ToolFinding {
         severity,
         rule: rule.to_string(),
@@ -26,7 +36,6 @@ pub fn file_finding(
         message,
         fix: None,
     }
-    .into_finding(check)
 }
 
 /// `1.234s`, or `412ms` below a second.

@@ -115,10 +115,7 @@ fn a_trigger_over_its_budget_is_a_garita_budget_finding() {
     );
     let out = repo.run();
     let f = finding(&out.report, "budget");
-    assert_eq!(
-        (f.check.as_str(), f.severity),
-        ("garita", Severity::Warning)
-    );
+    assert_eq!((f.check.as_deref(), f.severity), (None, Severity::Warning));
     assert!(f.message.contains("commit trigger"), "{}", f.message);
     assert_eq!(out.exit_code(), 0);
 }

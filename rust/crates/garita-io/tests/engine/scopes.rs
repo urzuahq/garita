@@ -1,6 +1,6 @@
 use garita_core::report::{CheckStatus, ScopeKind, Severity, Trigger};
 
-use crate::support::{Repo, check, finding, git_in, rules};
+use crate::support::{Repo, check, finding, git_in, run_rules};
 
 fn recorder_config(repo: &Repo, extra: &str) -> String {
     let tool = repo.recorder("tool");
@@ -54,7 +54,7 @@ fn changed_scope_sees_the_files_changed_against_the_base() {
     assert_eq!(files_seen(&repo), ["new.ts"]);
     assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::Changed);
     assert!(out.report.commit.is_some());
-    assert!(!rules(&out.report, "garita").contains(&"scope-widened"));
+    assert!(!run_rules(&out.report).contains(&"scope-widened"));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn a_missing_base_widens_to_all_with_scope_widened() {
     repo.commit_all("one");
     let out = repo.run_at(Trigger::Push);
     let f = finding(&out.report, "scope-widened");
-    assert_eq!((f.severity, f.check.as_str()), (Severity::Info, "garita"));
+    assert_eq!((f.severity, f.check.as_deref()), (Severity::Info, None));
     assert!(f.message.contains("no base ref"), "{}", f.message);
     assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::All);
     assert_eq!(files_seen(&repo), ["a.ts"]);
@@ -161,7 +161,7 @@ fn a_partly_staged_file_is_a_warning_once() {
         .filter(|f| f.rule == "partly-staged")
         .collect();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].check, "garita");
+    assert_eq!(found[0].check, None);
     assert_eq!(found[0].severity, Severity::Warning);
     assert_eq!(found[0].file.as_deref(), Some("a.ts"));
     assert_eq!(out.exit_code(), 0);
@@ -295,7 +295,7 @@ fn outside_root_counts_files_in_plural_only_for_a_check_given_files() {
         .filter(|f| f.rule == "outside-root")
         .collect();
     assert_eq!(outside.len(), 1, "{:#?}", out.report.findings);
-    assert_eq!(outside[0].check, "tool");
+    assert_eq!(outside[0].check.as_deref(), Some("tool"));
     assert!(
         outside[0]
             .message
@@ -331,13 +331,13 @@ fn partly_staged_follows_the_staged_scope_not_the_trigger() {
     repo.stage(&["a.ts"]);
     repo.write("a.ts", "a changed\n");
     let at_push = repo.run_at(Trigger::Push);
-    assert_eq!(rules(&at_push.report, "garita"), ["partly-staged"]);
+    assert_eq!(run_rules(&at_push.report), ["partly-staged"]);
     let at_ci = repo.run_at(Trigger::Ci);
-    assert!(!rules(&at_ci.report, "garita").contains(&"partly-staged"));
+    assert!(!run_rules(&at_ci.report).contains(&"partly-staged"));
     let mut request = repo.request(Trigger::Commit);
     request.files = Some(vec!["a.ts".into()]);
     let explicit = repo.run_request(&request);
-    assert!(rules(&explicit.report, "garita").is_empty());
+    assert!(run_rules(&explicit.report).is_empty());
 }
 
 fn failing_files_check(repo: &Repo) {
@@ -376,7 +376,7 @@ fn a_local_main_behind_a_feature_branch_is_still_the_base() {
         out.report.scope.as_ref().unwrap().files.as_deref(),
         Some(&["new.ts".to_string()][..])
     );
-    assert!(!rules(&out.report, "garita").contains(&"scope-widened"));
+    assert!(!run_rules(&out.report).contains(&"scope-widened"));
 }
 
 #[test]

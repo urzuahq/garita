@@ -10,7 +10,7 @@ use garita_core::receipt::file_name;
 use garita_core::report::{CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger};
 
 use super::exec;
-use super::finding::{GARITA, finding, seconds};
+use super::finding::{run_finding, seconds};
 use super::judge::{self, CheckResult, Record};
 use super::plan::{self, Planned};
 use super::record::{self, RunFacts};
@@ -64,7 +64,6 @@ struct Session<'a> {
     tree: ObjectId,
     worktree: ObjectId,
     dirty: bool,
-    notes: Vec<String>,
 }
 
 impl<'a> Session<'a> {
@@ -98,11 +97,10 @@ impl<'a> Session<'a> {
             commit,
             tree,
             worktree,
-            notes: Vec::new(),
         })
     }
 
-    fn run(mut self) -> Outcome {
+    fn run(self) -> Outcome {
         if let Some(error) = requires_error(&self.loaded.config, &self.request.version) {
             return self.finish(None, Vec::new(), Some(error));
         }
@@ -114,9 +112,10 @@ impl<'a> Session<'a> {
             }
         };
         let history = receipts::list(&self.root).unwrap_or_else(|e| {
-            self.notes.push(format!(
-                "garita: could not read past receipts, so nothing is demoted: {e}"
-            ));
+            let message = format!("could not read past receipts, so nothing is demoted: {e}");
+            scope
+                .findings
+                .push(run_finding(Severity::Info, "receipts-unreadable", message));
             Listing::default()
         });
         let config = &self.loaded.config;
@@ -128,7 +127,7 @@ impl<'a> Session<'a> {
             );
             scope
                 .findings
-                .push(finding(GARITA, Severity::Warning, "no-checks", message));
+                .push(run_finding(Severity::Warning, "no-checks", message));
         }
         let results = self.results(&picks, &scope);
         self.finish(Some(&scope), results, None)
@@ -244,7 +243,7 @@ impl<'a> Session<'a> {
     }
 
     fn finish(
-        mut self,
+        self,
         scope: Option<&Resolved>,
         results: Vec<CheckResult>,
         error: Option<String>,
@@ -289,25 +288,23 @@ impl<'a> Session<'a> {
         };
         let receipt = record::receipt(&facts, &results, &report);
         match receipts::write(&self.root, &receipt) {
-            Ok(_) => self.prune(),
+            Ok(_) => report.findings.extend(self.prune()),
             Err(e) => {
-                self.notes
-                    .push(format!("garita: could not write the receipt: {e}"));
+                let message = format!("could not write the receipt: {e}");
+                report
+                    .findings
+                    .push(run_finding(Severity::Info, "receipt-unwritten", message));
                 report.receipt = None;
             }
         }
-        Outcome {
-            report,
-            notes: self.notes,
-        }
+        Outcome { report }
     }
 
-    fn prune(&mut self) {
+    fn prune(&self) -> Option<Finding> {
         let keep = usize::try_from(self.loaded.config.receipts_keep).unwrap_or(usize::MAX);
-        if let Err(e) = receipts::prune(&self.root, keep) {
-            self.notes
-                .push(format!("garita: could not prune old receipts: {e}"));
-        }
+        let e = receipts::prune(&self.root, keep).err()?;
+        let message = format!("could not prune old receipts: {e}");
+        Some(run_finding(Severity::Info, "receipts-unpruned", message))
     }
 
     fn trigger_budget(&self) -> Option<Finding> {
@@ -325,7 +322,7 @@ impl<'a> Session<'a> {
                 seconds(took),
                 seconds(budget)
             );
-            finding(GARITA, severity, "budget", message)
+            run_finding(severity, "budget", message)
         })
     }
 }

@@ -162,7 +162,9 @@ pub type Examined = BTreeMap<String, u64>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
-    pub check: String,
+    /// The check that produced it; absent on a finding about the run itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
     pub severity: Severity,
     pub rule: String,
     pub file: Option<String>,
@@ -381,10 +383,14 @@ fn fail_reason(checks: &[CheckEntry], findings: &[Finding]) -> String {
     let mut run_level = 0;
     for f in findings.iter().filter(|f| f.severity == Severity::Error) {
         errors += 1;
-        if !checks.iter().any(|c| c.name == f.check) {
-            run_level += 1;
-        } else if !names.contains(&f.check.as_str()) {
-            names.push(&f.check);
+        match f
+            .check
+            .as_deref()
+            .filter(|n| checks.iter().any(|c| c.name == *n))
+        {
+            None => run_level += 1,
+            Some(name) if !names.contains(&name) => names.push(name),
+            Some(_) => {}
         }
     }
     if errors == 0 {
@@ -429,16 +435,20 @@ fn failing_rerun(
     let has_error = |name: &str| {
         findings
             .iter()
-            .any(|f| f.check == name && f.severity == Severity::Error)
+            .any(|f| f.check.as_deref() == Some(name) && f.severity == Severity::Error)
     };
     let names: Vec<&str> = checks
         .iter()
         .filter(|c| c.status == CheckStatus::Fail || has_error(&c.name))
         .map(|c| c.name.as_str())
         .collect();
-    let run_level = findings
-        .iter()
-        .any(|f| f.severity == Severity::Error && !checks.iter().any(|c| c.name == f.check));
+    let run_level = findings.iter().any(|f| {
+        f.severity == Severity::Error
+            && !f
+                .check
+                .as_deref()
+                .is_some_and(|n| checks.iter().any(|c| c.name == n))
+    });
     // An error that belongs to no listed check (a trigger's budget) can only be re-run by
     // running the trigger again, so it widens the re-run to the whole trigger.
     if run_level {
@@ -470,7 +480,7 @@ fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
     let mut files: Vec<&str> = Vec::new();
     for f in findings
         .iter()
-        .filter(|f| f.check == check && f.severity == Severity::Error)
+        .filter(|f| f.check.as_deref() == Some(check) && f.severity == Severity::Error)
     {
         if let Some(file) = f.file.as_deref() {
             if !files.contains(&file) {
@@ -566,7 +576,7 @@ mod tests {
 
     fn finding(check: &str, severity: Severity, file: Option<&str>) -> Finding {
         Finding {
-            check: check.into(),
+            check: Some(check.into()),
             severity,
             rule: "r".into(),
             file: file.map(Into::into),

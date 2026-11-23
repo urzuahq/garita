@@ -80,6 +80,12 @@ fn report_of(out: &Output) -> Report {
     if report.status == RunStatus::NotRun {
         assert!(report.error.is_some());
     }
+    assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
+    for f in &report.findings {
+        if let Some(check) = &f.check {
+            assert!(report.checks.iter().any(|c| &c.name == check), "{check}");
+        }
+    }
     report
 }
 
@@ -102,7 +108,7 @@ fn lint_repo(t: &Temp) {
 }
 
 #[test]
-fn a_failing_run_prints_one_json_report_and_a_summary_and_exits_1() {
+fn a_failing_run_prints_one_json_report_and_exits_1() {
     let t = Temp::new();
     lint_repo(&t);
     t.write("a.ts", "x\n");
@@ -111,10 +117,7 @@ fn a_failing_run_prints_one_json_report_and_a_summary_and_exits_1() {
     let report = report_of(&out);
     assert_eq!(report.status, RunStatus::Fail);
     assert_eq!(out.status.code(), Some(1));
-    let err = stderr(&out);
-    assert!(err.contains("garita: fail at commit"), "{err}");
-    assert!(err.contains("lint: fail"), "{err}");
-    assert!(err.contains("next: garita run lint"), "{err}");
+    assert_eq!(report.next_action.as_deref(), Some("garita run lint"));
     assert!(report.receipt.is_some());
 }
 
@@ -130,7 +133,6 @@ fn outside_a_repository_is_not_run_and_exits_2() {
             .unwrap()
             .contains("not inside a git repository")
     );
-    assert!(stderr(&out).contains("garita: not-run"));
 }
 
 #[test]
@@ -188,7 +190,6 @@ fn a_usage_error_under_run_is_still_one_not_run_report() {
     let error = report.error.unwrap();
     assert!(error.contains("lunch"), "{error}");
     assert!(!error.starts_with("error:"), "{error}");
-    assert!(!stderr(&out).contains("error: error:"), "{}", stderr(&out));
 }
 
 #[test]
@@ -205,8 +206,46 @@ fn a_usage_error_under_any_subcommand_is_one_report_with_the_error_said_once() {
         let report = report_of(&out);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert!(report.error.unwrap().contains("--bogus"), "{args:?}");
-        let err = stderr(&out);
-        assert_eq!(err.matches("error:").count(), 1, "{err}");
-        assert!(err.starts_with("garita: not-run (0 checks"), "{err}");
     }
+}
+
+#[test]
+fn a_passing_run_prints_one_json_report_and_nothing_else() {
+    let t = Temp::new();
+    git(&t.repo(), &["init", "-q", "-b", "main"]);
+    let tool = t.tool("lint", "exit 0");
+    t.write(".gitignore", ".garita/receipts/\n");
+    t.write(
+        ".garita/config.yaml",
+        &format!("schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n"),
+    );
+    t.write("a.ts", "x\n");
+    git(&t.repo(), &["add", "a.ts"]);
+    let out = garita(&t.repo(), &["run"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::Pass);
+    assert_eq!(out.status.code(), Some(0));
+}
+
+/// The version is the crate's, which a release changes; the golden holds a fixed one.
+fn without_version(mut value: serde_json::Value) -> serde_json::Value {
+    value["version"] = "0.0.0".into();
+    value
+}
+
+#[test]
+fn describe_prints_the_golden_and_nothing_else() {
+    let t = Temp::new();
+    let out = garita(&t.repo(), &["describe"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(stderr(&out), "");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.matches('\n').count(), 1, "{stdout:?}");
+    let printed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(printed["version"], env!("CARGO_PKG_VERSION"));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../garita-core/tests/contract/examples/describe.garita.json");
+    let golden: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(without_version(printed), golden);
 }

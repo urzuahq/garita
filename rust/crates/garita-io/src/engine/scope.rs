@@ -5,7 +5,7 @@ use garita_core::config::Config;
 use garita_core::report::{Finding, Scope, ScopeKind, Severity};
 
 use super::Request;
-use super::finding::{GARITA, file_finding, finding};
+use super::finding::{run_file_finding, run_finding};
 use crate::git::{self, GitError};
 
 const BASE_CANDIDATES: [&str; 5] = [
@@ -108,7 +108,7 @@ fn from_git(root: &Path, kind: ScopeKind, base: Option<&str>) -> Result<Resolved
                     kind.as_str()
                 );
                 wide.findings
-                    .push(finding(GARITA, Severity::Info, "scope-widened", message));
+                    .push(run_finding(Severity::Info, "scope-widened", message));
                 Ok(wide)
             }
         },
@@ -127,7 +127,7 @@ fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, G
                     let message = format!(
                         "the base `{base}` is HEAD's own commit, so the change set is empty"
                     );
-                    finding(GARITA, Severity::Info, "base-is-head", message)
+                    run_finding(Severity::Info, "base-is-head", message)
                 });
                 Ok(Ok((files, base.to_string(), note)))
             }
@@ -192,11 +192,5 @@ fn partly_staged(path: &Path) -> Finding {
     let message = format!(
         "{file} also has unstaged changes; garita checks the working file, so those changes are included"
     );
-    file_finding(
-        GARITA,
-        Severity::Warning,
-        "partly-staged",
-        Some(file),
-        message,
-    )
+    run_file_finding(Severity::Warning, "partly-staged", Some(file), message)
 }

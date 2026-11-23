@@ -230,10 +230,9 @@ enum Step {
 
 /// Writes both hooks, or neither when either would overwrite something that is not garita's.
 pub fn install(dir: &Path, replace: bool) -> Verdict {
-    const COMMAND: &str = "hooks install";
     let (root, hooks) = match locate(dir) {
         Ok(found) => found,
-        Err(e) => return verdict::not_run(COMMAND, e.to_string()),
+        Err(e) => return verdict::not_run(e.to_string()),
     };
     let mut findings = Vec::new();
     let mut refused = false;
@@ -243,7 +242,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             let shown = match git::hooks_path_set(&root) {
                 Ok(true) => format!("{} (core.hooksPath)", hooks.display()),
                 Ok(false) => format!("{}, where .git/hooks resolves to,", hooks.display()),
-                Err(e) => return verdict::not_run(COMMAND, e.to_string()),
+                Err(e) => return verdict::not_run(e.to_string()),
             };
             let (severity, message) = if replace {
                 (
@@ -263,7 +262,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             };
             findings.push(finding(severity, "hooks-dir-shared", message));
         }
-        Err(e) => return verdict::not_run(COMMAND, e.to_string()),
+        Err(e) => return verdict::not_run(e.to_string()),
     }
     let mut steps = Vec::new();
     for (name, trigger) in HOOKS {
@@ -271,10 +270,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => {
-                return verdict::not_run(
-                    COMMAND,
-                    format!("could not read {}: {e}", path.display()),
-                );
+                return verdict::not_run(format!("could not read {}: {e}", path.display()));
             }
         };
         let step = plan(&file, name, trigger, replace);
@@ -288,7 +284,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             Step::Keep(f) if f.severity == Severity::Error => Some(f),
             _ => None,
         }));
-        return verdict::verdict(COMMAND, findings, examined_hooks(), None);
+        return verdict::verdict(findings, examined_hooks(), None);
     }
     let mut written: Vec<(PathBuf, Prior)> = Vec::new();
     for step in steps {
@@ -308,7 +304,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
                             error.push_str(&format!("\ncould not restore {}: {e}", path.display()));
                         }
                     }
-                    return verdict::not_run(COMMAND, error);
+                    return verdict::not_run(error);
                 }
                 written.push((path, prior));
                 findings.push(done);
@@ -322,7 +318,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         );
         findings.push(finding(Severity::Warning, "config-missing", message));
     }
-    verdict::verdict(COMMAND, findings, examined_hooks(), None)
+    verdict::verdict(findings, examined_hooks(), None)
 }
 
 fn plan(file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) -> Step {
@@ -467,10 +463,9 @@ fn make_link(_: &Path, _: &Path) -> io::Result<()> {
 
 /// Removes the hooks garita wrote; any other file is left where it is.
 pub fn uninstall(dir: &Path) -> Verdict {
-    const COMMAND: &str = "hooks uninstall";
     let (_, hooks) = match locate(dir) {
         Ok(found) => found,
-        Err(e) => return verdict::not_run(COMMAND, e.to_string()),
+        Err(e) => return verdict::not_run(e.to_string()),
     };
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
@@ -478,13 +473,13 @@ pub fn uninstall(dir: &Path) -> Verdict {
         let shown = path.display();
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
-            Err(e) => return verdict::not_run(COMMAND, format!("could not read {shown}: {e}")),
+            Err(e) => return verdict::not_run(format!("could not read {shown}: {e}")),
         };
         let (rule, message) = match file.kind {
             Kind::Missing if !file.symlink => ("hook-absent", format!("{shown} does not exist")),
             Kind::Garita(_) => {
                 if let Err(e) = fs::remove_file(&path) {
-                    return verdict::not_run(COMMAND, format!("could not remove {shown}: {e}"));
+                    return verdict::not_run(format!("could not remove {shown}: {e}"));
                 }
                 ("hook-removed", format!("removed {shown}"))
             }
@@ -495,5 +490,5 @@ pub fn uninstall(dir: &Path) -> Verdict {
         };
         findings.push(finding(Severity::Info, rule, message));
     }
-    verdict::verdict(COMMAND, findings, examined_hooks(), None)
+    verdict::verdict(findings, examined_hooks(), None)
 }

@@ -16,7 +16,7 @@
         "required": ["name", "profile", "safe", "scopes", "metrics"],
         "properties": {
           "name": {"type": "string", "minLength": 1},
-          "profile": {"enum": ["base", "gate", "exempt"]},
+          "profile": {"enum": ["base", "gate", "run", "exempt"]},
           "kind": {"enum": ["lint", "format", "types", "test", "build", "records", "other"]},
           "safe": {"type": "boolean"},
           "scopes": {"type": "array", "items": {"type": "string"}},

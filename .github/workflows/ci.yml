@@ -34,9 +34,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: urzuahq/urzua/.github/actions/urzua-gate@12fe0b0bb94d6216e0756440b37ec939a5224cb0 # v0.4.13
+      - uses: urzuahq/urzua/.github/actions/urzua-gate@e52818ccf9ea03035ca7858d547c9df36ee6bfff # v0.4.14
         with:
-          version: v0.4.13
+          version: v0.4.14
           base-ref: ${{ github.base_ref }}
 
   changeset:

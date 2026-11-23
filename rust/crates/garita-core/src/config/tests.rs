@@ -711,11 +711,8 @@ fn affected_needs_a_task_runner() {
 }
 
 #[test]
-fn the_check_name_garita_is_reserved() {
-    let found = errs("schema_version: 1\nchecks:\n  garita:\n    run: x\n");
-    assert_eq!(found.len(), 1);
-    assert!(matches!(&found[0], ConfigError::Invalid { path, .. } if path == "checks.garita"));
-    assert!(found[0].to_string().contains("reserved"));
+fn a_check_may_be_named_garita() {
+    assert!(Config::parse("schema_version: 1\nchecks:\n  garita:\n    run: x\n").is_ok());
 }
 
 #[test]

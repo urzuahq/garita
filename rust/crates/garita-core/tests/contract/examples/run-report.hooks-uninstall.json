@@ -1,0 +1,37 @@
+{
+  "blocking": false,
+  "checks": [],
+  "commit": null,
+  "examined": {
+    "hooks": 2
+  },
+  "findings": [
+    {
+      "column": null,
+      "file": null,
+      "fingerprint": "0123456789abcdef",
+      "line": null,
+      "message": "removed /repo/.git/hooks/pre-commit",
+      "rule": "hook-removed",
+      "severity": "info"
+    },
+    {
+      "column": null,
+      "file": null,
+      "fingerprint": "0123456789abcdef",
+      "line": null,
+      "message": "removed /repo/.git/hooks/pre-push",
+      "rule": "hook-removed",
+      "severity": "info"
+    }
+  ],
+  "next_action": null,
+  "next_action_inputs": [],
+  "next_action_reason": null,
+  "receipt": null,
+  "schema_version": 1,
+  "scope": null,
+  "status": "pass",
+  "tree": null,
+  "trigger": null
+}
