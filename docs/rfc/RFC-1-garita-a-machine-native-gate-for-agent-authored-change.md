@@ -170,6 +170,15 @@ checks:
 ```
 
 Every key above is a configuration point with a default; a repository declares only what it changes.
+Only `schema_version` is required. The defaults that matter most:
+
+- A check takes one of three forms: `run` with a `parser`, `native` (RFC-2), or `builtin`. A `run`
+  with no `parser` uses `exit-code`. The one builtin is `clean-tree`.
+- A check with no `on` runs at every trigger.
+- A trigger with no `scope` uses `staged` at commit, `changed` at push, and `all` at ci and merge.
+- `budgets.on_exceed` and `on_crash` are `warn`, `timeout.factor` is 10 and `receipts.keep` is 200.
+- An unknown key anywhere is an error, and every problem in a config is reported at once, each with
+  the path of its key.
 
 `{files}` and `{affected}` are filled from the trigger's scope. A check with `{files}` and no matching
 files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose parser
@@ -281,7 +290,8 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   prints them: the placeholder, the flag it belongs to and what to put there.
 - `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),
   which is how a no-op is caught.
-- `commit` is `null` at the commit trigger, where no commit exists yet. `tree` is always present.
+- `commit` is `null` at the commit trigger, where no commit exists yet. `tree` is present whenever
+  the run started in a repository; a run that could not start at all has none.
 - `--format sarif` and `--format junit` render the same result for code scanning and CI summaries. JSON
   is the source; the others are views of it.
 

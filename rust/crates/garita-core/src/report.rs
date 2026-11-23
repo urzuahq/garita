@@ -1,0 +1,757 @@
+//! The verdict garita prints (RFC-1 §5).
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::argv::quote;
+
+pub const SCHEMA_VERSION: u32 = 1;
+pub const DOCTOR: &str = "garita doctor";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    Commit,
+    Push,
+    Ci,
+    Merge,
+}
+
+impl Trigger {
+    pub const ALL: [Trigger; 4] = [Trigger::Commit, Trigger::Push, Trigger::Ci, Trigger::Merge];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Trigger::Commit => "commit",
+            Trigger::Push => "push",
+            Trigger::Ci => "ci",
+            Trigger::Merge => "merge",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.as_str() == name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunStatus {
+    Pass,
+    Warn,
+    Fail,
+    NotRun,
+}
+
+impl RunStatus {
+    pub fn exit_code(self) -> u8 {
+        match self {
+            RunStatus::Pass | RunStatus::Warn => 0,
+            RunStatus::Fail => 1,
+            RunStatus::NotRun => 2,
+        }
+    }
+
+    pub fn blocking(self) -> bool {
+        self.exit_code() == 1
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+    Skipped,
+    NotRun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckKind {
+    Lint,
+    Format,
+    Types,
+    Test,
+    Build,
+    Records,
+    Other,
+}
+
+impl CheckKind {
+    pub const ALL: [CheckKind; 7] = [
+        CheckKind::Lint,
+        CheckKind::Format,
+        CheckKind::Types,
+        CheckKind::Test,
+        CheckKind::Build,
+        CheckKind::Records,
+        CheckKind::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CheckKind::Lint => "lint",
+            CheckKind::Format => "format",
+            CheckKind::Types => "types",
+            CheckKind::Test => "test",
+            CheckKind::Build => "build",
+            CheckKind::Records => "records",
+            CheckKind::Other => "other",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScopeKind {
+    Staged,
+    Changed,
+    Affected,
+    All,
+}
+
+impl ScopeKind {
+    pub const ALL: [ScopeKind; 4] = [
+        ScopeKind::Staged,
+        ScopeKind::Changed,
+        ScopeKind::Affected,
+        ScopeKind::All,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScopeKind::Staged => "staged",
+            ScopeKind::Changed => "changed",
+            ScopeKind::Affected => "affected",
+            ScopeKind::All => "all",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Scope {
+    pub kind: ScopeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packages: Option<Vec<String>>,
+}
+
+/// One count per unit (`files`, `tests`, `packages`), in key order.
+pub type Examined = BTreeMap<String, u64>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub check: String,
+    pub severity: Severity,
+    pub rule: String,
+    pub file: Option<String>,
+    pub line: Option<u64>,
+    pub column: Option<u64>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckEntry {
+    pub name: String,
+    pub kind: CheckKind,
+    pub status: CheckStatus,
+    pub duration_ms: u64,
+    pub examined: Examined,
+    pub rerun: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NextActionInput {
+    pub placeholder: String,
+    pub flag: String,
+    pub means: String,
+}
+
+/// Where a run happened; every field may be unknown when the run could not start.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunContext {
+    pub trigger: Option<Trigger>,
+    pub commit: Option<String>,
+    pub tree: Option<String>,
+    pub scope: Option<Scope>,
+    pub receipt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Report {
+    pub schema_version: u32,
+    pub status: RunStatus,
+    pub blocking: bool,
+    pub trigger: Option<Trigger>,
+    pub commit: Option<String>,
+    pub tree: Option<String>,
+    pub scope: Option<Scope>,
+    pub checks: Vec<CheckEntry>,
+    pub findings: Vec<Finding>,
+    pub examined: Examined,
+    pub next_action: Option<String>,
+    pub next_action_reason: Option<String>,
+    pub next_action_inputs: Vec<NextActionInput>,
+    pub receipt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextAction {
+    pub action: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl Report {
+    /// Builds the report for a run; an `error` makes it `not-run` whatever its checks say.
+    pub fn from_run(
+        context: RunContext,
+        checks: Vec<CheckEntry>,
+        findings: Vec<Finding>,
+        error: Option<String>,
+    ) -> Self {
+        let status = run_status(&checks, &findings, error.is_some());
+        let error = match (status, error) {
+            (RunStatus::NotRun, None) => Some(not_run_error(&checks)),
+            (_, error) => error,
+        };
+        let next = next_action(status, &checks, &findings);
+        Self {
+            schema_version: SCHEMA_VERSION,
+            status,
+            blocking: status.blocking(),
+            trigger: context.trigger,
+            commit: context.commit,
+            tree: context.tree,
+            scope: context.scope,
+            examined: total_examined(&checks),
+            checks,
+            findings,
+            next_action: next.action,
+            next_action_reason: next.reason,
+            next_action_inputs: Vec::new(),
+            receipt: context.receipt,
+            error,
+        }
+    }
+
+    /// A report for a run that could not start: no checks, no findings.
+    pub fn not_run(context: RunContext, error: String) -> Self {
+        Self::from_run(context, Vec::new(), Vec::new(), Some(error))
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        self.status.exit_code()
+    }
+}
+
+/// `not-run` wins when outcomes mix; then any error fails and any warning warns.
+pub fn run_status(checks: &[CheckEntry], findings: &[Finding], could_not_start: bool) -> RunStatus {
+    if could_not_start || checks.iter().any(|c| c.status == CheckStatus::NotRun) {
+        RunStatus::NotRun
+    } else if findings.iter().any(|f| f.severity == Severity::Error) {
+        RunStatus::Fail
+    } else if findings.iter().any(|f| f.severity == Severity::Warning) {
+        RunStatus::Warn
+    } else {
+        RunStatus::Pass
+    }
+}
+
+pub fn total_examined(checks: &[CheckEntry]) -> Examined {
+    let mut total = Examined::new();
+    for check in checks {
+        for (unit, count) in &check.examined {
+            let sum = total.entry(unit.clone()).or_insert(0);
+            *sum = sum.saturating_add(*count);
+        }
+    }
+    total
+}
+
+fn not_run_error(checks: &[CheckEntry]) -> String {
+    let names: Vec<&str> = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::NotRun)
+        .map(|c| c.name.as_str())
+        .collect();
+    format!("could not run: {}", names.join(", "))
+}
+
+pub fn next_action(status: RunStatus, checks: &[CheckEntry], findings: &[Finding]) -> NextAction {
+    match status {
+        RunStatus::Pass | RunStatus::Warn => NextAction {
+            action: None,
+            reason: None,
+        },
+        RunStatus::NotRun => NextAction {
+            action: Some(DOCTOR.to_string()),
+            reason: Some(not_run_reason(checks)),
+        },
+        RunStatus::Fail => match failing_rerun(checks, findings) {
+            Some(action) => NextAction {
+                action: Some(action),
+                reason: Some(fail_reason(findings)),
+            },
+            None => NextAction {
+                action: None,
+                reason: None,
+            },
+        },
+    }
+}
+
+fn not_run_reason(checks: &[CheckEntry]) -> String {
+    let count = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::NotRun)
+        .count();
+    if count == 0 {
+        "the run could not start".to_string()
+    } else {
+        format!("{} could not run", plural(count, "check"))
+    }
+}
+
+fn fail_reason(findings: &[Finding]) -> String {
+    let mut checks: Vec<&str> = Vec::new();
+    let mut errors = 0;
+    for f in findings.iter().filter(|f| f.severity == Severity::Error) {
+        errors += 1;
+        if !checks.contains(&f.check.as_str()) {
+            checks.push(&f.check);
+        }
+    }
+    format!(
+        "{} in {}",
+        plural(errors, "error"),
+        plural(checks.len(), "check")
+    )
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// The narrowest re-run of the first failing check: the first listed check with an error finding.
+fn failing_rerun(checks: &[CheckEntry], findings: &[Finding]) -> Option<String> {
+    let has_error = |name: &str| {
+        findings
+            .iter()
+            .any(|f| f.check == name && f.severity == Severity::Error)
+    };
+    let name = checks
+        .iter()
+        .map(|c| c.name.as_str())
+        .find(|n| has_error(n))
+        .or_else(|| {
+            findings
+                .iter()
+                .find(|f| f.severity == Severity::Error)
+                .map(|f| f.check.as_str())
+        })?;
+    Some(rerun_command(name, &error_files(name, findings)))
+}
+
+fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
+    let mut files: Vec<&str> = Vec::new();
+    for f in findings
+        .iter()
+        .filter(|f| f.check == check && f.severity == Severity::Error)
+    {
+        if let Some(file) = f.file.as_deref() {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+    }
+    files
+}
+
+pub fn rerun_command(check: &str, files: &[&str]) -> String {
+    let mut command = format!("garita run {}", quote(check));
+    if !files.is_empty() {
+        command.push_str(" --files");
+        for file in files {
+            command.push(' ');
+            command.push_str(&quote(file));
+        }
+    }
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RFC_EXAMPLE: &str = r#"{
+      "schema_version": 1,
+      "status": "fail",
+      "blocking": true,
+      "trigger": "push",
+      "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+      "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+      "scope": { "kind": "affected", "packages": ["frontend"] },
+      "checks": [
+        {
+          "name": "lint",
+          "kind": "lint",
+          "status": "fail",
+          "duration_ms": 412,
+          "examined": { "files": 38 },
+          "rerun": "garita run lint --files ts/frontend/src/App.tsx"
+        }
+      ],
+      "findings": [
+        {
+          "check": "lint",
+          "severity": "error",
+          "rule": "oxlint/no-debugger",
+          "file": "ts/frontend/src/App.tsx",
+          "line": 1302,
+          "column": 5,
+          "message": "Unexpected `debugger` statement",
+          "fix": "oxlint --fix ts/frontend/src/App.tsx",
+          "fingerprint": "5d1c0e9a"
+        }
+      ],
+      "examined": { "files": 38 },
+      "next_action": "garita run lint --files ts/frontend/src/App.tsx",
+      "next_action_reason": "1 error in 1 check",
+      "next_action_inputs": [],
+      "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json"
+    }"#;
+
+    fn check(name: &str, status: CheckStatus, files: u64) -> CheckEntry {
+        CheckEntry {
+            name: name.into(),
+            kind: CheckKind::Lint,
+            status,
+            duration_ms: 1,
+            examined: [("files".to_string(), files)].into(),
+            rerun: None,
+        }
+    }
+
+    fn finding(check: &str, severity: Severity, file: Option<&str>) -> Finding {
+        Finding {
+            check: check.into(),
+            severity,
+            rule: "r".into(),
+            file: file.map(Into::into),
+            line: None,
+            column: None,
+            message: "m".into(),
+            fix: None,
+            fingerprint: None,
+        }
+    }
+
+    #[test]
+    fn rfc_example_round_trips() {
+        let value: serde_json::Value = serde_json::from_str(RFC_EXAMPLE).unwrap();
+        let report: Report = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&report).unwrap(), value);
+    }
+
+    #[test]
+    fn rfc_example_is_what_from_run_builds() {
+        let expected: Report = serde_json::from_str(RFC_EXAMPLE).unwrap();
+        let context = RunContext {
+            trigger: expected.trigger,
+            commit: expected.commit.clone(),
+            tree: expected.tree.clone(),
+            scope: expected.scope.clone(),
+            receipt: expected.receipt.clone(),
+        };
+        let built = Report::from_run(
+            context,
+            expected.checks.clone(),
+            expected.findings.clone(),
+            None,
+        );
+        assert_eq!(built, expected);
+    }
+
+    #[test]
+    fn exit_codes_and_blocking() {
+        assert_eq!(
+            (RunStatus::Pass.exit_code(), RunStatus::Pass.blocking()),
+            (0, false)
+        );
+        assert_eq!(
+            (RunStatus::Warn.exit_code(), RunStatus::Warn.blocking()),
+            (0, false)
+        );
+        assert_eq!(
+            (RunStatus::Fail.exit_code(), RunStatus::Fail.blocking()),
+            (1, true)
+        );
+        assert_eq!(
+            (RunStatus::NotRun.exit_code(), RunStatus::NotRun.blocking()),
+            (2, false)
+        );
+    }
+
+    #[test]
+    fn no_findings_pass() {
+        assert_eq!(
+            run_status(&[check("a", CheckStatus::Pass, 1)], &[], false),
+            RunStatus::Pass
+        );
+        assert_eq!(run_status(&[], &[], false), RunStatus::Pass);
+    }
+
+    #[test]
+    fn info_findings_still_pass() {
+        let f = [finding("a", Severity::Info, None)];
+        assert_eq!(run_status(&[], &f, false), RunStatus::Pass);
+    }
+
+    #[test]
+    fn a_warning_warns() {
+        let f = [
+            finding("a", Severity::Info, None),
+            finding("a", Severity::Warning, None),
+        ];
+        assert_eq!(run_status(&[], &f, false), RunStatus::Warn);
+    }
+
+    #[test]
+    fn an_error_fails_over_warnings() {
+        let f = [
+            finding("a", Severity::Warning, None),
+            finding("b", Severity::Error, None),
+        ];
+        assert_eq!(run_status(&[], &f, false), RunStatus::Fail);
+    }
+
+    #[test]
+    fn not_run_wins_over_errors() {
+        let checks = [
+            check("a", CheckStatus::Fail, 1),
+            check("b", CheckStatus::NotRun, 0),
+        ];
+        let f = [finding("a", Severity::Error, None)];
+        assert_eq!(run_status(&checks, &f, false), RunStatus::NotRun);
+        assert_eq!(run_status(&[], &f, true), RunStatus::NotRun);
+    }
+
+    #[test]
+    fn examined_sums_per_unit_in_key_order() {
+        let mut b = check("b", CheckStatus::Pass, 2);
+        b.examined.insert("tests".into(), 7);
+        b.examined.insert("packages".into(), 1);
+        let total = total_examined(&[check("a", CheckStatus::Pass, 3), b]);
+        assert_eq!(
+            serde_json::to_string(&total).unwrap(),
+            r#"{"files":5,"packages":1,"tests":7}"#
+        );
+        assert!(total_examined(&[]).is_empty());
+    }
+
+    #[test]
+    fn next_action_is_null_on_pass_and_warn() {
+        for status in [RunStatus::Pass, RunStatus::Warn] {
+            let next = next_action(status, &[], &[finding("a", Severity::Warning, Some("x"))]);
+            assert_eq!(
+                next,
+                NextAction {
+                    action: None,
+                    reason: None
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn next_action_is_doctor_on_not_run() {
+        let next = next_action(RunStatus::NotRun, &[], &[]);
+        assert_eq!(next.action.as_deref(), Some(DOCTOR));
+        assert_eq!(next.reason.as_deref(), Some("the run could not start"));
+        let checks = [
+            check("a", CheckStatus::NotRun, 0),
+            check("b", CheckStatus::NotRun, 0),
+        ];
+        let next = next_action(RunStatus::NotRun, &checks, &[]);
+        assert_eq!(next.reason.as_deref(), Some("2 checks could not run"));
+    }
+
+    #[test]
+    fn fail_reruns_first_failing_check_on_its_error_files() {
+        let checks = [
+            check("format", CheckStatus::Pass, 1),
+            check("lint", CheckStatus::Fail, 1),
+            check("types", CheckStatus::Fail, 1),
+        ];
+        let f = [
+            finding("types", Severity::Error, Some("t.ts")),
+            finding("lint", Severity::Warning, Some("w.ts")),
+            finding("lint", Severity::Error, Some("b.ts")),
+            finding("lint", Severity::Error, Some("a b.ts")),
+            finding("lint", Severity::Error, Some("b.ts")),
+            finding("lint", Severity::Error, None),
+        ];
+        let next = next_action(RunStatus::Fail, &checks, &f);
+        assert_eq!(
+            next.action.as_deref(),
+            Some("garita run lint --files b.ts 'a b.ts'")
+        );
+        assert_eq!(next.reason.as_deref(), Some("5 errors in 2 checks"));
+    }
+
+    #[test]
+    fn fail_without_files_reruns_the_whole_check() {
+        let checks = [check("types", CheckStatus::Fail, 1)];
+        let f = [finding("types", Severity::Error, None)];
+        let next = next_action(RunStatus::Fail, &checks, &f);
+        assert_eq!(next.action.as_deref(), Some("garita run types"));
+        assert_eq!(next.reason.as_deref(), Some("1 error in 1 check"));
+    }
+
+    #[test]
+    fn fail_from_a_finding_whose_check_is_not_listed() {
+        let f = [finding("budget", Severity::Error, None)];
+        let next = next_action(RunStatus::Fail, &[], &f);
+        assert_eq!(next.action.as_deref(), Some("garita run budget"));
+    }
+
+    #[test]
+    fn fail_without_any_error_finding_has_no_action() {
+        let next = next_action(
+            RunStatus::Fail,
+            &[],
+            &[finding("a", Severity::Warning, None)],
+        );
+        assert_eq!(
+            next,
+            NextAction {
+                action: None,
+                reason: None
+            }
+        );
+    }
+
+    #[test]
+    fn not_run_report_always_carries_the_gate_keys() {
+        let report = Report::not_run(RunContext::default(), "no .garita/config.yaml".into());
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["status"], "not-run");
+        assert_eq!(value["blocking"], false);
+        assert_eq!(value["findings"], serde_json::json!([]));
+        assert_eq!(value["examined"], serde_json::json!({}));
+        assert_eq!(value["error"], "no .garita/config.yaml");
+        assert_eq!(value["next_action"], DOCTOR);
+        assert_eq!(report.exit_code(), 2);
+    }
+
+    #[test]
+    fn a_check_that_could_not_start_makes_a_not_run_report_with_an_error() {
+        let checks = vec![
+            check("a", CheckStatus::Pass, 4),
+            check("b", CheckStatus::NotRun, 0),
+        ];
+        let report = Report::from_run(RunContext::default(), checks, Vec::new(), None);
+        assert_eq!(report.status, RunStatus::NotRun);
+        assert!(!report.blocking);
+        assert_eq!(report.error.as_deref(), Some("could not run: b"));
+        assert_eq!(report.examined, Examined::from([("files".to_string(), 4)]));
+    }
+
+    #[test]
+    fn an_error_forces_not_run_and_is_kept() {
+        let report = Report::from_run(
+            RunContext::default(),
+            vec![check("a", CheckStatus::Fail, 1)],
+            vec![finding("a", Severity::Error, None)],
+            Some("tool missing".into()),
+        );
+        assert_eq!(report.status, RunStatus::NotRun);
+        assert!(!report.blocking);
+        assert_eq!(report.error.as_deref(), Some("tool missing"));
+    }
+
+    #[test]
+    fn a_report_that_ran_has_no_error_key() {
+        let report = Report::from_run(RunContext::default(), Vec::new(), Vec::new(), None);
+        let value = serde_json::to_value(&report).unwrap();
+        assert!(value.get("error").is_none());
+        assert_eq!(value["next_action"], serde_json::Value::Null);
+        assert_eq!(value["next_action_reason"], serde_json::Value::Null);
+        assert_eq!(value["commit"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn enums_serialize_with_contract_spellings() {
+        let j = |v: serde_json::Value| v.as_str().unwrap_or_default().to_string();
+        assert_eq!(
+            j(serde_json::to_value(RunStatus::NotRun).unwrap()),
+            "not-run"
+        );
+        assert_eq!(
+            j(serde_json::to_value(CheckStatus::Skipped).unwrap()),
+            "skipped"
+        );
+        assert_eq!(
+            j(serde_json::to_value(CheckStatus::NotRun).unwrap()),
+            "not-run"
+        );
+        assert_eq!(
+            j(serde_json::to_value(Severity::Warning).unwrap()),
+            "warning"
+        );
+        assert_eq!(j(serde_json::to_value(Trigger::Ci).unwrap()), "ci");
+        for kind in CheckKind::ALL {
+            assert_eq!(j(serde_json::to_value(kind).unwrap()), kind.as_str());
+        }
+        for kind in ScopeKind::ALL {
+            assert_eq!(j(serde_json::to_value(kind).unwrap()), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn finding_omits_absent_fix_and_fingerprint() {
+        let value = serde_json::to_value(finding("a", Severity::Info, None)).unwrap();
+        assert!(value.get("fix").is_none());
+        assert!(value.get("fingerprint").is_none());
+        assert_eq!(value["file"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rerun_command_quotes_what_needs_it() {
+        assert_eq!(rerun_command("lint", &[]), "garita run lint");
+        assert_eq!(
+            rerun_command("lint", &["a.ts", "it's.ts"]),
+            r"garita run lint --files a.ts 'it'\''s.ts'"
+        );
+    }
+}
