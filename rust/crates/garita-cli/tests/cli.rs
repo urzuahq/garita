@@ -198,12 +198,15 @@ fn version_exits_zero() {
 }
 
 #[test]
-fn unimplemented_commands_exit_one_with_empty_stdout() {
+fn a_usage_error_under_any_subcommand_is_one_report_with_the_error_said_once() {
     let t = Temp::new();
-    for args in [&["doctor"][..], &["hooks", "install"]] {
+    for args in [&["doctor", "--bogus"][..], &["hooks", "install", "--bogus"]] {
         let out = garita(&t.repo(), args);
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert!(out.stdout.is_empty(), "{args:?}");
-        assert!(stderr(&out).contains("is not implemented"), "{args:?}");
+        let report = report_of(&out);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(report.error.unwrap().contains("--bogus"), "{args:?}");
+        let err = stderr(&out);
+        assert_eq!(err.matches("error:").count(), 1, "{err}");
+        assert!(err.starts_with("garita: not-run (0 checks"), "{err}");
     }
 }

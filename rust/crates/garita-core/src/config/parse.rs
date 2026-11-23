@@ -9,7 +9,7 @@ use super::{
     EvidenceAccept, MergeConfig, MergeMode, OnCrash, OnExceed, Partition, Regression,
     TriggerConfig, VersionReq, Worktree, parse_duration,
 };
-use crate::argv::{Command, Placeholder};
+use crate::argv::{Arg, Command, Placeholder};
 use crate::report::{CheckKind, ScopeKind, Trigger};
 
 const TOP_KEYS: &[&str] = &[
@@ -634,6 +634,13 @@ impl Walker {
                 return None;
             }
         };
+        if matches!(command.args().first(), Some(Arg::Placeholder(_))) {
+            self.invalid(
+                &run_path,
+                "the command must start with a program, not a placeholder",
+            );
+            return None;
+        }
         Some(CheckForm::Run {
             run,
             command,

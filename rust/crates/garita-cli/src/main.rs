@@ -8,6 +8,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use garita_core::report::{Report, RunContext, Trigger};
 use garita_io::engine::{self, Request, SystemClock};
+use garita_io::{doctor, hooks};
 
 #[derive(Parser)]
 #[command(name = "garita", version, about)]
@@ -69,7 +70,13 @@ impl From<TriggerArg> for Trigger {
 #[derive(Subcommand)]
 enum HooksAction {
     /// Install the git hooks
-    Install,
+    Install {
+        /// Overwrite a hook that is not garita's, or a symlinked one
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Remove the git hooks garita installed
+    Uninstall,
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -79,21 +86,34 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(e) => return usage_error(&e),
     };
-    let name = match cli.command {
+    let dir = current_dir();
+    let verdict = match cli.command {
         Command::Run(args) => return run(args),
-        Command::Doctor => "doctor",
+        Command::Doctor => doctor::doctor(&doctor::Request {
+            dir,
+            version: VERSION.to_string(),
+            path: std::env::var_os("PATH"),
+        }),
         Command::Hooks {
-            action: HooksAction::Install,
-        } => "hooks install",
+            action: HooksAction::Install { replace },
+        } => hooks::install(&dir, replace),
+        Command::Hooks {
+            action: HooksAction::Uninstall,
+        } => hooks::uninstall(&dir),
     };
-    eprintln!("garita: {name} is not implemented");
-    ExitCode::FAILURE
+    emit(&verdict.report, &[], &verdict.summary)
 }
 
-/// Help and version print as usual; any other usage error under `run` is still one JSON verdict.
+fn current_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Help and version print as usual; any other usage error under a subcommand is still one
+/// JSON verdict.
 fn usage_error(e: &clap::Error) -> ExitCode {
-    let wants_run = std::env::args().nth(1).as_deref() == Some("run");
-    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) || !wants_run {
+    let subcommand = std::env::args().nth(1);
+    let wants_report = matches!(subcommand.as_deref(), Some("run" | "doctor" | "hooks"));
+    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) || !wants_report {
         let _ = e.print();
         return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
     }
@@ -101,12 +121,12 @@ fn usage_error(e: &clap::Error) -> ExitCode {
     let text = rendered.trim();
     let text = text.strip_prefix("error: ").unwrap_or(text);
     let report = Report::not_run(RunContext::default(), text.to_string());
-    emit(&report, &[])
+    emit(&report, &[], &engine::summary(&report))
 }
 
 fn run(args: RunArgs) -> ExitCode {
     let trigger = Trigger::from(args.trigger);
-    let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let dir = current_dir();
     let mut request = Request::new(dir, VERSION, trigger);
     request.base = args.base;
     request.checks = args.checks;
@@ -122,26 +142,30 @@ fn run(args: RunArgs) -> ExitCode {
     };
     let outcome = std::panic::catch_unwind(|| engine::run(&request, &SystemClock));
     match outcome {
-        Ok(outcome) => emit(&outcome.report, &outcome.notes),
+        Ok(outcome) => emit(
+            &outcome.report,
+            &outcome.notes,
+            &engine::summary(&outcome.report),
+        ),
         Err(_) => {
             let context = RunContext {
                 trigger: Some(trigger),
                 ..RunContext::default()
             };
             let report = Report::not_run(context, "garita stopped on an internal error".into());
-            emit(&report, &[])
+            emit(&report, &[], &engine::summary(&report))
         }
     }
 }
 
-fn emit(report: &Report, notes: &[String]) -> ExitCode {
+fn emit(report: &Report, notes: &[String], summary: &str) -> ExitCode {
     let mut stdout = std::io::stdout().lock();
     let printed = writeln!(stdout, "{}", engine::to_json(report)).and_then(|()| stdout.flush());
     let mut stderr = std::io::stderr().lock();
     for note in notes {
         let _ = writeln!(stderr, "{note}");
     }
-    let _ = writeln!(stderr, "{}", engine::summary(report));
+    let _ = writeln!(stderr, "{summary}");
     if printed.is_err() {
         let _ = writeln!(stderr, "garita: could not write the report to stdout");
         return ExitCode::from(2);
