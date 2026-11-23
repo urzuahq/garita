@@ -1,13 +1,8 @@
 //! Pure gate logic: no I/O, no clock, no environment.
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub mod argv;
+pub mod config;
+pub mod receipt;
+pub mod report;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 1);
-    }
-}
+pub use report::SCHEMA_VERSION;
