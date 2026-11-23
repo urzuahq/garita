@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 RUST_DIR := rust
 
-.PHONY: build test fmt fmt-check lint deny contract ci ci-gate-test test-no-leak knope-pin nextest-pin release-invariants release-guard knope-validate
+.PHONY: build test fmt fmt-check lint deny contract ci ci-gate-test test-no-leak knope-pin nextest-pin release-invariants release-guard knope-validate install-script-test
 
 build:
 	cd $(RUST_DIR) && cargo build --workspace --release --locked
@@ -48,4 +48,7 @@ release-guard:
 knope-validate:
 	knope --validate
 
-ci: fmt-check lint deny build test test-no-leak contract ci-gate-test nextest-pin knope-pin release-invariants release-guard
+install-script-test:
+	scripts/install-test.sh
+
+ci: fmt-check lint deny build test test-no-leak contract ci-gate-test nextest-pin knope-pin release-invariants release-guard install-script-test
