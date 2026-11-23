@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use garita_core::adapter::{Adapter, Outcome as Parsed, ParseContext, ToolOutput};
+use garita_core::adapter::{Adapter, Outcome as Parsed, ParseContext, ToolOutput, output_tail};
 use garita_core::config::{Check, Config, OnCrash, OnExceed};
 use garita_core::report::{
     CheckEntry, CheckKind, CheckStatus, Examined, Finding, Severity, Trigger, rerun_command,
@@ -209,11 +209,18 @@ impl Tally<'_> {
                     self.parsed(&output, &task.directory, None);
                 }
             }
-            Err(reason) => self.unrecognized(reason.clone()),
+            Err(reason) => {
+                let tail = output_tail(&finished.stderr, &finished.stdout);
+                if tail.is_empty() {
+                    self.unrecognized(format!("{reason}; turbo printed nothing"));
+                } else {
+                    self.unrecognized(format!("{reason}; turbo printed:\n{tail}"));
+                }
+            }
         }
         let code = finished.exit_code.unwrap_or_default();
         if code != 0 && self.errors() == errors_before {
-            let tail = garita_core::receipt::output_tail(&finished.stderr);
+            let tail = output_tail(&finished.stderr, &finished.stdout);
             self.unrecognized(format!(
                 "turbo exited with code {code} but no task reported an error:\n{tail}"
             ));

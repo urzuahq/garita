@@ -502,7 +502,10 @@ fn exit_code_outcomes() {
     assert_eq!(finding.rule, "exit-code/failed");
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.file, None);
-    assert_eq!(finding.message, "exited with code 3:\nerr 1\nout 1\nout 2");
+    assert_eq!(
+        finding.message,
+        "exited with code 3:\nstderr:\nerr 1\nstdout:\nout 1\nout 2"
+    );
     let silent = run(Adapter::ExitCode, "", "\n\n", Some(1));
     assert_eq!(
         silent.findings[0].message,
@@ -514,8 +517,8 @@ fn exit_code_outcomes() {
 fn exit_code_tail_is_capped() {
     let many: String = (0..100).map(|i| format!("line {i}\r\n")).collect();
     let tail = exit_code::tail("", &many);
-    assert_eq!(tail.lines().count(), 20);
-    assert!(tail.starts_with("line 80\n") && tail.ends_with("line 99"));
+    assert_eq!(tail.lines().count(), 10);
+    assert!(tail.starts_with("line 90\n") && tail.ends_with("line 99"));
     let wide = "é".repeat(3_000_000);
     let tail = exit_code::tail(&wide, "");
     assert!(tail.len() <= 4000 && tail.chars().all(|c| c == 'é'));

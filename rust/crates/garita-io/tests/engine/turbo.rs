@@ -117,3 +117,89 @@ fn affected_expands_to_nothing_outside_the_affected_scope() {
         log[0]
     );
 }
+
+const LINT_CASE: &str = "turbo@2.5.6/lint-check-summarize";
+const LOG: &str = ".turbo/turbo-lint$colon$check.log";
+
+fn lint_repo(body: &str) -> Repo {
+    let repo = Repo::new();
+    let log = repo.log_path("turbo");
+    let tool = repo.tool(
+        "turbo",
+        &format!("printf '%s\\n' \"$*\" >> '{}'\n{body}", log.display()),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    \
+         run: {tool} lint:check --output-logs=errors-only\n    parser: oxlint\n    via: turbo\n"
+    ));
+    repo.write("packages/lib/src/lint-error.ts", "debugger;\n");
+    repo.stage(&["packages/lib/src/lint-error.ts"]);
+    repo
+}
+
+/// Each task's log as pnpm wraps it: its echo of the command, oxlint's JSON, its failure line.
+fn writes_oxlint_logs() -> String {
+    let oxlint = recording("oxlint@1.94.0");
+    let turbo = recording(LINT_CASE);
+    let task = |pkg: &str, case: &str, failed: bool| {
+        let tail = if failed {
+            "printf '[ELIFECYCLE] Command failed with exit code 1.\\n'"
+        } else {
+            "true"
+        };
+        format!(
+            "{{ printf '$ oxlint src --format=json\\n'; cat '{o}/{case}/stdout'; {tail}; }} \
+             > 'packages/{pkg}/{LOG}'\n",
+            o = oxlint.display()
+        )
+    };
+    format!(
+        "mkdir -p .turbo/runs packages/app/.turbo packages/docs/.turbo packages/lib/.turbo\n\
+         cp '{}/summary.json' .turbo/runs/LINT.json\n{}{}{}exit 1",
+        turbo.display(),
+        task("app", "no-files-matched-json", false),
+        task("docs", "clean-json", false),
+        task("lib", "one-error-in-package-json", true),
+    )
+}
+
+#[test]
+fn oxlint_through_turbo_gets_its_flag_after_the_separator_and_reports_file_and_line() {
+    let repo = lint_repo(&writes_oxlint_logs());
+    let out = repo.run();
+    assert_eq!(
+        repo.log("turbo"),
+        vec!["lint:check --output-logs=errors-only --summarize --continue -- --format=json"]
+    );
+    let errors: Vec<_> = out
+        .report
+        .findings
+        .iter()
+        .filter(|f| f.severity == Severity::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
+    assert_eq!(
+        errors[0].file.as_deref(),
+        Some("packages/lib/src/lint-error.ts")
+    );
+    assert_eq!(errors[0].line.map(|l| l.get()), Some(2));
+    assert_eq!(errors[0].rule, "oxlint/eslint/no-debugger");
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Fail);
+}
+
+#[test]
+fn a_turbo_usage_error_says_what_turbo_printed() {
+    let repo = lint_repo(
+        "echo ' ERROR  unexpected argument '\"'\"'--bogus'\"'\"' found' >&2\n\
+         echo 'Usage: turbo run [OPTIONS] [TASKS]...' >&2\nexit 1",
+    );
+    let out = repo.run();
+    let f = finding(&out.report, "turbo/unrecognized-output");
+    assert!(f.message.contains("no run summary"), "{}", f.message);
+    assert!(
+        f.message.contains("unexpected argument '--bogus' found"),
+        "{}",
+        f.message
+    );
+    assert!(f.message.contains("Usage: turbo run"), "{}", f.message);
+}

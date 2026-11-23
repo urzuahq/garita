@@ -238,7 +238,11 @@ fn partition_runs_once_per_root_with_paths_rebased_and_findings_mapped_back() {
     assert_eq!(f.line.map(|l| l.get()), Some(2));
     let outside = finding(&out.report, "outside-root");
     assert_eq!(outside.severity, Severity::Info);
-    assert!(outside.message.contains("1 file"), "{}", outside.message);
+    assert!(
+        outside.message.starts_with("1 file in scope lies outside"),
+        "{}",
+        outside.message
+    );
     assert_eq!(check(&out.report, "lint").status, CheckStatus::Fail);
     let receipt = repo.receipt_of(&out.report);
     assert!(
@@ -268,6 +272,38 @@ fn cwd_runs_the_check_inside_that_directory() {
         finding(&out.report, "outside-root").severity,
         Severity::Info
     );
+}
+
+#[test]
+fn outside_root_counts_files_in_plural_only_for_a_check_given_files() {
+    let repo = Repo::new();
+    let tool = repo.recorder("tool");
+    let whole = repo.recorder("whole");
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  tool:\n    run: {tool} {{files}}\n    cwd: web\n  \
+         whole:\n    run: {whole}\n    cwd: web\n"
+    ));
+    repo.write("web/a.ts", "a\n");
+    repo.write("b.ts", "b\n");
+    repo.write("c.ts", "c\n");
+    repo.stage(&["web/a.ts", "b.ts", "c.ts"]);
+    let out = repo.run();
+    let outside: Vec<_> = out
+        .report
+        .findings
+        .iter()
+        .filter(|f| f.rule == "outside-root")
+        .collect();
+    assert_eq!(outside.len(), 1, "{:#?}", out.report.findings);
+    assert_eq!(outside[0].check, "tool");
+    assert!(
+        outside[0]
+            .message
+            .starts_with("2 files in scope lie outside"),
+        "{}",
+        outside[0].message
+    );
+    assert_eq!(repo.log("whole").len(), 1);
 }
 
 #[test]

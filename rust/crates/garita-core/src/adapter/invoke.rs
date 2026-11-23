@@ -14,10 +14,20 @@ fn insert(argv: &mut Vec<String>, flags: &[&str]) {
     }
 }
 
-/// The value of an option given as `--name=value` or `--name value`, if present.
-fn option_value<'a>(argv: &'a [String], name: &str) -> Option<&'a str> {
+/// The arguments after the first `--`, which turbo hands to each task's command.
+fn inner(argv: &[String]) -> &[String] {
+    let skip = argv
+        .iter()
+        .skip(1)
+        .position(|a| a == "--")
+        .map_or(argv.len(), |i| i + 2);
+    argv.get(skip..).unwrap_or_default()
+}
+
+/// The value of an option given as `--name=value` or `--name value` among `args`, up to any `--`.
+fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     let prefix = format!("{name}=");
-    let mut args = argv.iter().skip(1).take_while(|a| *a != "--");
+    let mut args = args.iter().take_while(|a| *a != "--");
     while let Some(arg) = args.next() {
         if let Some(value) = arg.strip_prefix(&prefix) {
             return Some(value);
@@ -30,22 +40,39 @@ fn option_value<'a>(argv: &'a [String], name: &str) -> Option<&'a str> {
 }
 
 fn has_flag(argv: &[String], name: &str) -> bool {
-    option_value(argv, name).is_some()
+    option_value(argv.get(1..).unwrap_or_default(), name).is_some()
+}
+
+/// Adds `flags` for the tool turbo runs: after the existing `--`, else after an appended one.
+fn insert_inner(argv: &mut Vec<String>, flags: &[&str]) {
+    if !argv.iter().skip(1).any(|a| a == "--") {
+        argv.push("--".to_string());
+    }
+    argv.extend(flags.iter().map(|f| (*f).to_string()));
 }
 
 impl Adapter {
-    /// Appends what this adapter's parser needs when the command does not carry it already.
+    /// Appends what this adapter's parser needs when the command does not carry it already;
+    /// through turbo, those flags belong to the inner tool, after `--`.
     pub fn complete_argv(self, argv: &mut Vec<String>, via_turbo: bool) -> Result<(), String> {
         match self {
-            Adapter::Oxlint => match option_value(argv, "--format") {
-                None => insert(argv, &["--format=json"]),
-                Some("json") => {}
-                Some(other) => {
-                    return Err(format!(
-                        "the oxlint parser reads `--format=json`, but the command passes `--format {other}`"
-                    ));
+            Adapter::Oxlint => {
+                let args = if via_turbo {
+                    inner(argv)
+                } else {
+                    argv.get(1..).unwrap_or_default()
+                };
+                match option_value(args, "--format") {
+                    None if via_turbo => insert_inner(argv, &["--format=json"]),
+                    None => insert(argv, &["--format=json"]),
+                    Some("json") => {}
+                    Some(other) => {
+                        return Err(format!(
+                            "the oxlint parser reads `--format=json`, but the command passes `--format {other}`"
+                        ));
+                    }
                 }
-            },
+            }
             Adapter::Tsc if !via_turbo && !has_flag(argv, "--pretty") => {
                 insert(argv, &["--pretty", "false"]);
             }
@@ -136,6 +163,55 @@ mod tests {
                 Ok(argv(&["t", "x"]))
             );
         }
+    }
+
+    #[test]
+    fn oxlint_via_turbo_gets_json_after_the_separator() {
+        let turbo = |words: &[&str]| {
+            let mut a = argv(words);
+            Adapter::Oxlint.complete_argv(&mut a, true)?;
+            complete_turbo_argv(&mut a);
+            Ok::<_, String>(a)
+        };
+        assert_eq!(
+            turbo(&["pnpm", "turbo", "lint:check", "--output-logs=errors-only"]),
+            Ok(argv(&[
+                "pnpm",
+                "turbo",
+                "lint:check",
+                "--output-logs=errors-only",
+                "--summarize",
+                "--continue",
+                "--",
+                "--format=json",
+            ]))
+        );
+        assert_eq!(
+            turbo(&["turbo", "lint", "--", "--quiet"]),
+            Ok(argv(&[
+                "turbo",
+                "lint",
+                "--summarize",
+                "--continue",
+                "--",
+                "--quiet",
+                "--format=json",
+            ]))
+        );
+        assert_eq!(
+            turbo(&["turbo", "lint", "--", "--format", "json"]),
+            Ok(argv(&[
+                "turbo",
+                "lint",
+                "--summarize",
+                "--continue",
+                "--",
+                "--format",
+                "json",
+            ]))
+        );
+        let err = turbo(&["turbo", "lint", "--", "--format=stylish"]).unwrap_err();
+        assert!(err.contains("--format stylish"), "{err}");
     }
 
     #[test]

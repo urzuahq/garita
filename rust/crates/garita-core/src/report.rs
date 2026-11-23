@@ -383,7 +383,8 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
-/// The narrowest re-run of the first failing check: the first listed check that failed or has an error.
+/// The narrowest re-run of what failed: each listed check that failed or has an error, then any
+/// unlisted check with an error, with their error files only when every one of them has some.
 fn failing_rerun(
     trigger: Option<Trigger>,
     checks: &[CheckEntry],
@@ -394,17 +395,34 @@ fn failing_rerun(
             .iter()
             .any(|f| f.check == name && f.severity == Severity::Error)
     };
-    let name = checks
+    let mut names: Vec<&str> = checks
         .iter()
-        .find(|c| c.status == CheckStatus::Fail || has_error(&c.name))
+        .filter(|c| c.status == CheckStatus::Fail || has_error(&c.name))
         .map(|c| c.name.as_str())
-        .or_else(|| {
-            findings
-                .iter()
-                .find(|f| f.severity == Severity::Error)
-                .map(|f| f.check.as_str())
-        })?;
-    Some(rerun_command(trigger, name, &error_files(name, findings)))
+        .collect();
+    for f in findings.iter().filter(|f| f.severity == Severity::Error) {
+        let listed = checks.iter().any(|c| c.name == f.check);
+        if !listed && !names.contains(&f.check.as_str()) {
+            names.push(&f.check);
+        }
+    }
+    let first = *names.first()?;
+    if names.len() == 1 {
+        return Some(rerun_command(trigger, first, &error_files(first, findings)));
+    }
+    let mut files: Vec<&str> = Vec::new();
+    for name in &names {
+        let own = error_files(name, findings);
+        if own.is_empty() {
+            return Some(rerun_checks(trigger, &names, &[]));
+        }
+        for file in own {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+    }
+    Some(rerun_checks(trigger, &names, &files))
 }
 
 fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
@@ -425,11 +443,19 @@ fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
 /// `garita run [--trigger <t>] <check> --files ...`; `--trigger` is left out at `commit`, the
 /// default, and a file beginning with `-` puts the files after `--`.
 pub fn rerun_command(trigger: Option<Trigger>, check: &str, files: &[&str]) -> String {
-    let mut command = "garita run ".to_string();
+    rerun_checks(trigger, &[check], files)
+}
+
+/// [`rerun_command`] for several checks at once.
+pub fn rerun_checks(trigger: Option<Trigger>, checks: &[&str], files: &[&str]) -> String {
+    let mut command = "garita run".to_string();
     if let Some(t) = trigger.filter(|t| *t != Trigger::Commit) {
-        command.push_str(&format!("--trigger {} ", t.as_str()));
+        command.push_str(&format!(" --trigger {}", t.as_str()));
     }
-    command.push_str(&quote(check));
+    for check in checks {
+        command.push(' ');
+        command.push_str(&quote(check));
+    }
     if !files.is_empty() {
         command.push_str(" --files");
         if files.iter().any(|f| f.starts_with('-')) {
@@ -646,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn fail_reruns_first_failing_check_on_its_error_files() {
+    fn fail_reruns_every_failing_check_on_their_error_files() {
         let checks = [
             check("format", CheckStatus::Pass, 1),
             check("lint", CheckStatus::Fail, 1),
@@ -663,9 +689,28 @@ mod tests {
         let next = next_action(None, RunStatus::Fail, &checks, &f);
         assert_eq!(
             next.action.as_deref(),
-            Some("garita run lint --files b.ts 'a b.ts'")
+            Some("garita run lint types --files b.ts 'a b.ts' t.ts")
         );
         assert_eq!(next.reason.as_deref(), Some("5 errors in 2 checks"));
+    }
+
+    #[test]
+    fn two_failing_checks_rerun_together_without_files_when_one_has_none() {
+        let checks = [
+            check("lint", CheckStatus::Fail, 1),
+            check("types", CheckStatus::Fail, 1),
+        ];
+        let f = [
+            finding("lint", Severity::Error, Some("a.ts")),
+            finding("types", Severity::Error, None),
+            finding("budget", Severity::Error, None),
+        ];
+        let next = next_action(Some(Trigger::Push), RunStatus::Fail, &checks, &f);
+        assert_eq!(
+            next.action.as_deref(),
+            Some("garita run --trigger push lint types budget")
+        );
+        assert_eq!(next.reason.as_deref(), Some("3 errors in 3 checks"));
     }
 
     #[test]
@@ -735,18 +780,18 @@ mod tests {
         ];
         let r = verdict(checks, vec![finding("b", Severity::Warning, Some("w.ts"))]);
         assert_eq!(r.status, RunStatus::Fail);
-        assert_eq!(r.next_action.as_deref(), Some("garita run b"));
+        assert_eq!(r.next_action.as_deref(), Some("garita run b c"));
         assert_eq!(r.next_action_reason.as_deref(), Some("2 checks failed"));
     }
 
     #[test]
-    fn a_failed_check_listed_before_an_error_check_is_rerun_first() {
+    fn a_failed_check_without_files_drops_files_from_the_joint_rerun() {
         let checks = vec![
             check("a", CheckStatus::Fail, 1),
             check("b", CheckStatus::Fail, 1),
         ];
         let r = verdict(checks, vec![finding("b", Severity::Error, Some("x.ts"))]);
-        assert_eq!(r.next_action.as_deref(), Some("garita run a"));
+        assert_eq!(r.next_action.as_deref(), Some("garita run a b"));
         assert_eq!(r.next_action_reason.as_deref(), Some("1 error in 1 check"));
     }
 

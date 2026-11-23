@@ -17,6 +17,7 @@ mod path;
 mod tsc;
 pub mod turbo;
 
+pub use exit_code::tail as output_tail;
 pub use fingerprint::fingerprint;
 pub use invoke::complete_turbo_argv;
 pub use path::rebase;
