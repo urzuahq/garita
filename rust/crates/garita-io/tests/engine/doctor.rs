@@ -207,6 +207,18 @@ fn only_a_garita_run_command_at_this_hooks_trigger_counts_as_calling_garita() {
         ("pre-commit", "garita run --trigger commit || true\n", false),
         ("pre-commit", "garita run --trigger commit &\n", false),
         ("pre-commit", "garita run; exit 0\n", false),
+        (
+            "pre-commit",
+            "garita run --trigger commit \\\n  || true\n",
+            false,
+        ),
+        (
+            "pre-commit",
+            "exec garita run --trigger commit 2>&1\n",
+            true,
+        ),
+        ("pre-commit", "garita run --trigger commit >&2\n", true),
+        ("pre-commit", "garita run --trigger commit 2>&1 &\n", false),
         ("pre-commit", "garita runner\n", false),
         ("pre-commit", "# garita run --trigger commit\n", false),
         ("pre-push", "garita run\n", false),
