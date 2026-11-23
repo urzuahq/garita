@@ -125,8 +125,27 @@ fn try_plan<'a>(
         Vec::new()
     };
     let mut units = Vec::new();
+    let fixed = command
+        .expand(&[], &affected)
+        .iter()
+        .map(|a| a.len() + 1)
+        .sum::<usize>();
     for (cwd, rel) in groups {
-        units.push(unit(command, adapter, turbo, cwd, &rel, &affected)?);
+        let batches = if wants_files {
+            batches(&rel, fixed, ARG_LIMIT)
+        } else {
+            vec![rel]
+        };
+        for batch in batches {
+            units.push(unit(
+                command,
+                adapter,
+                turbo,
+                cwd.clone(),
+                &batch,
+                &affected,
+            )?);
+        }
     }
     let env = match (&scope.base, turbo && scope.affected()) {
         (Some(base), true) => vec![(OsString::from("TURBO_SCM_BASE"), OsString::from(base))],
@@ -177,6 +196,32 @@ fn unit(
 }
 
 type Groups = BTreeMap<String, Vec<String>>;
+
+/// The most argument bytes one invocation carries, well under common OS limits.
+const ARG_LIMIT: usize = 128 * 1024;
+/// Room for the flags an adapter appends and the `./` a dash-led path gets.
+const RESERVE: usize = 256;
+
+/// Splits `files` into runs of at most `limit` bytes of arguments, counting each argument's
+/// bytes plus its terminator and `fixed` for the rest of the command; order is kept and every
+/// batch holds at least one file.
+pub fn batches(files: &[String], fixed: usize, limit: usize) -> Vec<Vec<String>> {
+    let room = limit.saturating_sub(fixed + RESERVE);
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut size = 0;
+    for file in files {
+        let cost = file.len() + 3;
+        match out.last_mut() {
+            Some(batch) if size + cost <= room => batch.push(file.clone()),
+            _ => {
+                out.push(vec![file.clone()]);
+                size = 0;
+            }
+        }
+        size += cost;
+    }
+    out
+}
 
 /// The directories the tool runs in, each with its files relative to it, and how many files
 /// fell outside all of them.
@@ -244,6 +289,32 @@ mod tests {
 
     fn strings(words: &[&str]) -> Vec<String> {
         words.iter().map(|w| (*w).to_string()).collect()
+    }
+
+    #[test]
+    fn batches_keep_order_respect_the_limit_and_drop_nothing() {
+        let files: Vec<String> = (0..1000).map(|i| format!("dir/file-{i:04}.ts")).collect();
+        let limit = 4096;
+        let got = batches(&files, 100, limit);
+        assert!(got.len() > 3);
+        for batch in &got {
+            assert!(!batch.is_empty());
+            let bytes: usize = batch.iter().map(|f| f.len() + 1).sum();
+            assert!(bytes + 100 <= limit, "{bytes}");
+        }
+        assert_eq!(got.concat(), files);
+        assert_eq!(batches(&[], 0, limit), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_path_longer_than_the_limit_gets_its_own_batch() {
+        let long = "x".repeat(10_000);
+        let files = strings(&["a", &long, "b"]);
+        let got = batches(&files, 0, 4096);
+        assert_eq!(
+            got,
+            vec![strings(&["a"]), vec![long.clone()], strings(&["b"])]
+        );
     }
 
     #[test]

@@ -368,3 +368,71 @@ fn a_files_check_with_no_matching_file_is_skipped_with_no_input() {
     assert_eq!(rules(&out.report, "lint"), ["no-input"]);
     assert_eq!(out.exit_code(), 0);
 }
+
+#[test]
+fn a_run_where_no_check_applies_to_the_trigger_warns_with_no_checks() {
+    for checks in ["checks:\n  late:\n    run: x\n    on: [ci]\n", ""] {
+        let repo = Repo::new();
+        repo.config(&format!("schema_version: 1\n{checks}"));
+        let out = repo.run();
+        let f = finding(&out.report, "no-checks");
+        assert_eq!(
+            (f.check.as_str(), f.severity),
+            ("garita", Severity::Warning)
+        );
+        assert!(f.message.contains("`commit` trigger"), "{}", f.message);
+        assert_eq!((out.report.status, out.exit_code()), (RunStatus::Warn, 0));
+    }
+}
+
+#[test]
+fn selected_but_skipped_or_named_checks_get_no_no_checks_finding() {
+    let repo = Repo::new();
+    let tool = repo.recorder("lint");
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n    on: [ci]\n"
+    ));
+    assert!(!rules(&repo.run_at(Trigger::Ci).report, "garita").contains(&"no-checks"));
+    assert!(
+        !rules(&repo.run_named(Trigger::Commit, &["lint"]).report, "garita").contains(&"no-checks")
+    );
+}
+
+#[test]
+fn many_files_are_split_into_batches_and_one_failing_batch_still_fails_the_run() {
+    let repo = Repo::new();
+    let calls = repo.log_path("calls");
+    let tool = repo.tool(
+        "lint",
+        &format!(
+            "echo x >> '{}'\nfor f; do case \"$f\" in *target*) echo \"bad $f\" >&2; exit 1;; esac; done\nexit 0",
+            calls.display()
+        ),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n"
+    ));
+    let dir = "d".repeat(180);
+    let total = 1800;
+    for i in 0..total {
+        let name = if i == 1000 {
+            format!("{dir}/target.ts")
+        } else {
+            format!("{dir}/f{i:05}.ts")
+        };
+        repo.write(&name, "");
+    }
+    repo.stage(&[&dir]);
+    let out = repo.run();
+    assert!(repo.log("calls").len() >= 3, "{}", repo.log("calls").len());
+    assert_eq!(out.exit_code(), 1);
+    assert!(
+        finding(&out.report, "exit-code/failed")
+            .message
+            .contains("target.ts")
+    );
+    assert_eq!(
+        check(&out.report, "lint").examined.get("files"),
+        Some(&(total as u64))
+    );
+}

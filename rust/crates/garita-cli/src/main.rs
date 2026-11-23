@@ -97,10 +97,10 @@ fn usage_error(e: &clap::Error) -> ExitCode {
         let _ = e.print();
         return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
     }
-    let report = Report::not_run(
-        RunContext::default(),
-        e.render().to_string().trim().to_string(),
-    );
+    let rendered = e.render().to_string();
+    let text = rendered.trim();
+    let text = text.strip_prefix("error: ").unwrap_or(text);
+    let report = Report::not_run(RunContext::default(), text.to_string());
     emit(&report, &[])
 }
 

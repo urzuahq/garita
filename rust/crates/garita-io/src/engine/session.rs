@@ -106,7 +106,7 @@ impl<'a> Session<'a> {
         if let Some(error) = self.requires_error() {
             return self.finish(None, Vec::new(), Some(error));
         }
-        let scope = match scope::resolve(&self.root, &self.loaded.config, self.request) {
+        let mut scope = match scope::resolve(&self.root, &self.loaded.config, self.request) {
             Ok(scope) => scope,
             Err(e) => {
                 let error = format!("could not compute the scope: {e}");
@@ -121,6 +121,15 @@ impl<'a> Session<'a> {
         });
         let config = &self.loaded.config;
         let picks = select::select(config, self.request.trigger, &self.request.checks, &history);
+        if picks.is_empty() && self.request.checks.is_empty() {
+            let message = format!(
+                "no check is configured for the `{}` trigger",
+                self.request.trigger.as_str()
+            );
+            scope
+                .findings
+                .push(finding(GARITA, Severity::Warning, "no-checks", message));
+        }
         let results = self.results(&picks, &scope);
         self.finish(Some(&scope), results, None)
     }

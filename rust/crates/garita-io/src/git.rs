@@ -262,6 +262,37 @@ pub fn changed_files(root: &Path, base: &str) -> Result<Vec<PathBuf>, GitError> 
 }
 
 /// Every tracked file in the index, once each.
+/// The commit `rev` names, or `None` when it names none.
+pub fn resolve_commit(root: &Path, rev: &str) -> Result<Option<ObjectId>, GitError> {
+    let spec = format!("{rev}^{{commit}}");
+    let mut cmd = command(root);
+    cmd.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        &spec,
+    ]);
+    let (desc, out) = output(cmd)?;
+    match out.status.code() {
+        Some(0) => object_id("rev-parse", &out.stdout).map(Some),
+        Some(1) => Ok(None),
+        _ => Err(failed(desc, &out)),
+    }
+}
+
+/// The short name of the checked-out branch, or `None` on a detached HEAD.
+pub fn current_branch(root: &Path) -> Result<Option<String>, GitError> {
+    let mut cmd = command(root);
+    cmd.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let (desc, out) = output(cmd)?;
+    match out.status.code() {
+        Some(0) => Ok(Some(line(&out.stdout))),
+        Some(1) => Ok(None),
+        _ => Err(failed(desc, &out)),
+    }
+}
+
 pub fn all_files(root: &Path) -> Result<Vec<PathBuf>, GitError> {
     run(root, ["ls-files", "-z", "--cached"]).map(|b| paths(&b))
 }

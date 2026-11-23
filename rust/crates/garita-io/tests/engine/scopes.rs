@@ -303,3 +303,77 @@ fn partly_staged_follows_the_staged_scope_not_the_trigger() {
     let explicit = repo.run_request(&request);
     assert!(rules(&explicit.report, "garita").is_empty());
 }
+
+fn failing_files_check(repo: &Repo) {
+    let tool = repo.tool("lint", "echo \"bad: $*\" >&2; exit 1");
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n    globs: ['*.ts']\n"
+    ));
+}
+
+#[test]
+fn on_main_with_no_remote_the_push_scope_widens_instead_of_passing_on_nothing() {
+    let repo = Repo::new();
+    failing_files_check(&repo);
+    repo.write("a.ts", "a\n");
+    repo.commit_all("one");
+    let out = repo.run_at(Trigger::Push);
+    let f = finding(&out.report, "scope-widened");
+    assert!(f.message.contains("passed over"), "{}", f.message);
+    assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::All);
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Fail);
+    assert_eq!(out.exit_code(), 1);
+}
+
+#[test]
+fn a_local_main_behind_a_feature_branch_is_still_the_base() {
+    let repo = Repo::new();
+    failing_files_check(&repo);
+    repo.write("old.ts", "o\n");
+    repo.commit_all("base");
+    repo.git(&["switch", "-q", "-c", "feature"]);
+    repo.write("new.ts", "n\n");
+    repo.commit_all("change");
+    let out = repo.run_at(Trigger::Push);
+    assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::Changed);
+    assert_eq!(
+        out.report.scope.as_ref().unwrap().files.as_deref(),
+        Some(&["new.ts".to_string()][..])
+    );
+    assert!(!rules(&out.report, "garita").contains(&"scope-widened"));
+}
+
+#[test]
+fn a_remote_base_equal_to_head_is_an_empty_change_and_checks_skip_with_no_input() {
+    let origin = Repo::new();
+    origin.write("a.ts", "a\n");
+    origin.commit_all("one");
+    let url = format!("file://{}", origin.root().display());
+    let clone = origin.base().join("clone");
+    git_in(
+        origin.base(),
+        &["clone", "-q", &url, clone.to_str().unwrap()],
+    );
+    let repo = origin.adopt("clone");
+    failing_files_check(&repo);
+    let out = repo.run_at(Trigger::Push);
+    assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::Changed);
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Skipped);
+    assert_eq!(finding(&out.report, "no-input").severity, Severity::Info);
+    assert_eq!(out.exit_code(), 0);
+}
+
+#[test]
+fn an_explicit_base_equal_to_head_is_honoured_and_says_the_change_is_empty() {
+    let repo = Repo::new();
+    failing_files_check(&repo);
+    repo.write("a.ts", "a\n");
+    repo.commit_all("one");
+    let mut request = repo.request(Trigger::Push);
+    request.base = Some("HEAD".into());
+    let out = repo.run_request(&request);
+    let f = finding(&out.report, "base-is-head");
+    assert_eq!(f.severity, Severity::Info);
+    assert_eq!(out.report.scope.as_ref().unwrap().kind, ScopeKind::Changed);
+    assert_eq!(check(&out.report, "lint").status, CheckStatus::Skipped);
+}

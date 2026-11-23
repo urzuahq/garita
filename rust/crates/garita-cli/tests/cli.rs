@@ -185,7 +185,10 @@ fn a_usage_error_under_run_is_still_one_not_run_report() {
     let out = garita(&t.repo(), &["run", "--trigger", "lunch"]);
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(2));
-    assert!(report.error.unwrap().contains("lunch"));
+    let error = report.error.unwrap();
+    assert!(error.contains("lunch"), "{error}");
+    assert!(!error.starts_with("error:"), "{error}");
+    assert!(!stderr(&out).contains("error: error:"), "{}", stderr(&out));
 }
 
 #[test]

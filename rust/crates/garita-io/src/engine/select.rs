@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use garita_core::config::{Check, CheckForm, Config, OnExceed};
-use garita_core::report::{Finding, Severity, Trigger};
+use garita_core::report::{CheckStatus, Finding, Severity, Trigger};
 
 use super::finding::{finding, seconds};
 use crate::receipts::Listing;
@@ -73,7 +73,8 @@ fn supported(check: &Check) -> Pick<'_> {
     }
 }
 
-/// The `demoted` finding when the last run of `check` at `trigger` went over its budget.
+/// The `demoted` finding when the last run of `check` at `trigger` went over its budget and
+/// still passed or warned; a check that failed or could not run keeps gating here.
 fn demoted(config: &Config, check: &Check, trigger: Trigger, history: &Listing) -> Option<Finding> {
     if config.on_exceed(check) != OnExceed::Demote {
         return None;
@@ -83,7 +84,8 @@ fn demoted(config: &Config, check: &Check, trigger: Trigger, history: &Listing) 
     let last = history.last_run_of(&check.name, trigger)?;
     let entry = last.receipt.checks.iter().find(|c| c.name == check.name)?;
     let took = Duration::from_millis(entry.duration_ms);
-    (took > budget).then(|| {
+    let gated = matches!(entry.status, CheckStatus::Pass | CheckStatus::Warn);
+    (gated && took > budget).then(|| {
         let message = format!(
             "demoted to {}: its last run at {} took {}, over its budget of {}; \
              `garita run {} --trigger {}` runs it here again",

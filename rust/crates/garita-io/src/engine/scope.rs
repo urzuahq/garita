@@ -96,7 +96,11 @@ fn from_git(root: &Path, kind: ScopeKind, base: Option<&str>) -> Result<Resolved
         ScopeKind::Staged => Ok(resolved(kind, git::staged_files(root)?, None)),
         ScopeKind::All => Ok(resolved(kind, git::all_files(root)?, None)),
         ScopeKind::Changed | ScopeKind::Affected => match changed(root, base)? {
-            Ok((files, base)) => Ok(resolved(kind, files, Some(base))),
+            Ok((files, base, note)) => {
+                let mut r = resolved(kind, files, Some(base));
+                r.findings.extend(note);
+                Ok(r)
+            }
             Err(why) => {
                 let mut wide = resolved(ScopeKind::All, git::all_files(root)?, None);
                 let message = format!(
@@ -111,29 +115,62 @@ fn from_git(root: &Path, kind: ScopeKind, base: Option<&str>) -> Result<Resolved
     }
 }
 
-/// The changed files and the base they were measured against, or why there are none.
-fn changed(
-    root: &Path,
-    base: Option<&str>,
-) -> Result<Result<(Vec<PathBuf>, String), String>, GitError> {
-    let candidates: Vec<&str> = match base {
-        Some(base) => vec![base],
-        None => BASE_CANDIDATES.to_vec(),
-    };
-    for candidate in &candidates {
-        match git::changed_files(root, candidate) {
-            Ok(files) => return Ok(Ok((files, (*candidate).to_string()))),
-            Err(GitError::RefNotFound(_)) if base.is_none() => {}
+type Changed = (Vec<PathBuf>, String, Option<Finding>);
+
+/// The changed files, the base they were measured against and any note about it, or why
+/// there are none.
+fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, GitError> {
+    if let Some(base) = base {
+        return match git::changed_files(root, base) {
+            Ok(files) => {
+                let note = equals_head(root, base)?.then(|| {
+                    let message = format!(
+                        "the base `{base}` is HEAD's own commit, so the change set is empty"
+                    );
+                    finding(GARITA, Severity::Info, "base-is-head", message)
+                });
+                Ok(Ok((files, base.to_string(), note)))
+            }
             Err(
                 e @ (GitError::RefNotFound(_) | GitError::Shallow(_) | GitError::NoMergeBase(_)),
-            ) => return Ok(Err(e.to_string())),
+            ) => Ok(Err(e.to_string())),
+            Err(e) => Err(e),
+        };
+    }
+    let current = git::current_branch(root)?;
+    let mut passed_over = Vec::new();
+    for candidate in BASE_CANDIDATES {
+        let local = !candidate.contains('/');
+        if local && (current.as_deref() == Some(candidate) || equals_head(root, candidate)?) {
+            passed_over.push(candidate);
+            continue;
+        }
+        match git::changed_files(root, candidate) {
+            Ok(files) => return Ok(Ok((files, candidate.to_string(), None))),
+            Err(GitError::RefNotFound(_)) => {}
+            Err(e @ (GitError::Shallow(_) | GitError::NoMergeBase(_))) => {
+                return Ok(Err(e.to_string()));
+            }
             Err(e) => return Err(e),
         }
     }
+    let skipped = if passed_over.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; {} passed over because it is the checked-out branch or HEAD's own commit",
+            passed_over.join(", ")
+        )
+    };
     Ok(Err(format!(
-        "no base ref was found; tried {}; pass --base",
-        candidates.join(", ")
+        "no base ref was found; tried {}{skipped}; pass --base",
+        BASE_CANDIDATES.join(", ")
     )))
+}
+
+fn equals_head(root: &Path, rev: &str) -> Result<bool, GitError> {
+    let head = git::resolve_commit(root, "HEAD")?;
+    Ok(head.is_some() && git::resolve_commit(root, rev)? == head)
 }
 
 /// Files present in the working tree; a staged or committed file deleted since is not checked.

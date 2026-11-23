@@ -139,3 +139,34 @@ fn a_trigger_over_budget_with_fail_blocks_and_reruns_the_trigger() {
         Some("garita run --trigger commit")
     );
 }
+
+#[test]
+fn a_slow_failing_check_is_not_demoted_and_keeps_gating() {
+    let repo = Repo::new();
+    let tool = repo.tool("slowfail", "sleep 0.4; exit 1");
+    repo.config(&format!(
+        "schema_version: 1\nbudgets: {{ on_exceed: demote }}\nchecks:\n  slow:\n    run: {tool}\n    \
+         budget: {{ duration: 150ms }}\n    on: [commit, ci]\n"
+    ));
+    for _ in 0..2 {
+        let out = repo.run();
+        assert_eq!(out.exit_code(), 1);
+        assert_eq!(check(&out.report, "slow").status, CheckStatus::Fail);
+        assert!(rules(&out.report, "slow").contains(&"budget"));
+        assert!(!rules(&out.report, "slow").contains(&"demoted"));
+    }
+}
+
+#[test]
+fn a_slow_passing_check_is_still_demoted() {
+    let repo = Repo::new();
+    sleeper(
+        &repo,
+        "    budget: { duration: 150ms }\n    on: [commit, ci]\n    on_exceed: demote\n",
+        "",
+    );
+    assert_eq!(check(&repo.run().report, "slow").status, CheckStatus::Warn);
+    let second = repo.run();
+    assert_eq!(check(&second.report, "slow").status, CheckStatus::Skipped);
+    assert!(rules(&second.report, "slow").contains(&"demoted"));
+}
