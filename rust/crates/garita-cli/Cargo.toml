@@ -16,3 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
+garita-core = { workspace = true }
+garita-io = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

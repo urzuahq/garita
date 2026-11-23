@@ -162,14 +162,17 @@ dependencies = [
 
 [[package]]
 name = "garita-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "clap",
+ "garita-core",
+ "garita-io",
+ "serde_json",
 ]
 
 [[package]]
 name = "garita-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -179,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "garita-io"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "garita-core",
  "serde_json",

@@ -52,8 +52,12 @@ protocol, with `--describe` returning the `describe` part.
 
 `invoke` owns everything about how a tool is called:
 
-- **Placeholders.** `{files}` and `{affected}` are filled from the scope (RFC-1 §3). A check whose
+- **Placeholders.** `{files}` and `{affected}` are filled from the scope (RFC-1 §2). A check whose
   command has no placeholder always runs. That is not a `no-input` skip.
+- **Flags the parser needs.** An adapter appends the flags its parser depends on when the command
+  does not carry them: `--format=json` for oxlint, `--pretty false` for tsc run directly, and
+  `--summarize` and `--continue` for turbo. A command that asks oxlint for a different format is a
+  configuration error.
 - **`partition`.** One run per matching root, from inside it, with paths rebased to the root.
   Findings are mapped back to repository-relative paths.
 - **`exclude`.** Globs removed from the check's input.
