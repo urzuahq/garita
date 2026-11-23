@@ -18,6 +18,12 @@ tsc_dir=tsc@$(pkgver typescript)
 tsgo_dir=tsgo@$(pkgver @typescript/native-preview)
 turbo_dir=turbo@$(pkgver turbo)
 
+for d in "$oxlint_dir" "$oxfmt_dir" "$tsc_dir" "$tsgo_dir" "$turbo_dir"; do
+  case $d in
+    *@) echo "record.sh: a tool version did not resolve; run pnpm install --frozen-lockfile in workspace/" >&2; exit 2 ;;
+  esac
+done
+
 clean_variants() {
   local f
   for f in "$ws"/variants/*; do

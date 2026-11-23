@@ -91,13 +91,14 @@ What the first adapters read, each settled from a recorded run:
 
 | Tool | Source | Examined count | What the recording showed |
 |---|---|---|---|
-| oxlint | `--format json` | The report's `number_of_files` | Exit 1 covers findings, no files matched and a bad config alike. A bad config prints no JSON at all. The default format changes when the tool detects an agent, so the format is always passed |
+| oxlint | `--format json` | The report's `number_of_files` | Exit 1 covers findings, no files matched and a bad config alike. A bad config prints no JSON at all, and no files matched prints a line of prose before the JSON. The default format changes when the tool detects an agent, so the format is always passed |
 | oxfmt | `--check` | The file count in its closing line | Exit 0 formatted, 1 unformatted, 2 for an error or no files matched. Paths only, so a finding has a file and no line or rule |
-| tsc | `--pretty false` diagnostic lines | `--listFilesOnly`, leaving out the compiler's own library files | The same errors exit 1 or 2 depending on build state, so only zero or non-zero means anything. Multi-line messages continue on indented lines. TypeScript 5.8 and the TypeScript 7 native compiler print the same line format |
+| tsc | `--pretty false` diagnostic lines | `--listFilesOnly`, leaving out the compiler's own library files | TypeScript 5.8 exits 1 or 2 for the same errors depending on build state, and the TypeScript 7 native compiler exits 1 where 5.8 exits 2, so only zero or non-zero means anything. Multi-line messages continue on indented lines. The two compilers print the same diagnostic lines |
 | `exit-code` | The exit code and the last lines of output | The files passed to it | The finding's message is the output tail |
 
-All four tools print paths relative to the working directory, so a partitioned run rebases them from
-the root it ran in.
+Paths in findings (oxlint's `filename`, oxfmt's listed files, tsc's diagnostic lines) are relative to
+the working directory, so a partitioned run rebases them from the root it ran in. Other output is
+not: `--listFilesOnly` prints absolute paths, and so do some error messages.
 
 **Each adapter is written against a recorded run of the real tool,** and the recordings are its test
 fixtures, kept under the tool's version. Documentation is not enough: the facts an adapter depends
@@ -116,10 +117,13 @@ The adapter needs, per task: the package directory, the exit code and that task'
 hands to `parse` with paths rebased from the package directory.
 
 For turbo, the adapter runs it with `--summarize` and `--continue` and reads the run summary it
-writes. The summary gives each task's package directory, exit code and log file, and the log file
-holds that task's output without turbo's prefix. Without `--continue` the first failure stops the
-other tasks, and they are missing from the summary. The adapter never parses turbo's prefixed
-terminal output, whose order changes from run to run.
+writes. The summary gives each task's package directory, exit code and log file, with paths relative to
+the workspace root. The log file holds that task's output without turbo's prefix, together with the
+package manager's own lines (the command it ran, and a line reporting a failed exit), which `parse`
+ignores. Without `--continue` a failure can stop the other tasks, and which of them then appear in
+the summary depends on timing, so the adapter always passes it and takes its list of tasks from the
+summary, never from the log files. It never parses turbo's prefixed terminal output, whose order
+changes from run to run.
 
 A runner returns the highest exit code among its tasks, so it cannot tell findings from a crash. The
 adapter classifies each task separately.
