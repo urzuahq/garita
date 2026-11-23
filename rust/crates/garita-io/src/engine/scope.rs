@@ -168,6 +168,11 @@ fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, G
     )))
 }
 
+/// Why no base ref can be found for the `changed` and `affected` scopes, when none can.
+pub(crate) fn base_unresolved(root: &Path) -> Result<Option<String>, GitError> {
+    Ok(changed(root, None)?.err())
+}
+
 fn equals_head(root: &Path, rev: &str) -> Result<bool, GitError> {
     let head = git::resolve_commit(root, "HEAD")?;
     Ok(head.is_some() && git::resolve_commit(root, rev)? == head)

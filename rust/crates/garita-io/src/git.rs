@@ -427,6 +427,15 @@ pub fn hooks_dir(root: &Path) -> Result<PathBuf, GitError> {
     Ok(absolute(root, path_line(&hooks)))
 }
 
+/// The worktree's own git directory and the repository's common one (the same outside a
+/// linked worktree), both absolute.
+pub fn git_dirs(root: &Path) -> Result<[PathBuf; 2], GitError> {
+    let own = path_line(&run(root, ["rev-parse", "--absolute-git-dir"])?);
+    let common = path_line(&run(root, ["rev-parse", "--git-common-dir"])?);
+    let common = absolute(root, common);
+    Ok([own, common.canonicalize().unwrap_or(common)])
+}
+
 /// The blob hash git gives a file's bytes, with no clean filters applied.
 pub fn hash_object(root: &Path, file: &Path) -> Result<ObjectId, GitError> {
     let mut cmd = command(root);

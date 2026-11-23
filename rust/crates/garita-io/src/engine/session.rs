@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use garita_core::ObjectId;
-use garita_core::config::{Check, CheckForm, OnExceed, satisfies};
+use garita_core::config::{Check, CheckForm, Config, OnExceed, satisfies};
 use garita_core::receipt::file_name;
 use garita_core::report::{
     CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger, rerun_command,
@@ -103,7 +103,7 @@ impl<'a> Session<'a> {
     }
 
     fn run(mut self) -> Outcome {
-        if let Some(error) = self.requires_error() {
+        if let Some(error) = requires_error(&self.loaded.config, &self.request.version) {
             return self.finish(None, Vec::new(), Some(error));
         }
         let mut scope = match scope::resolve(&self.root, &self.loaded.config, self.request) {
@@ -132,22 +132,6 @@ impl<'a> Session<'a> {
         }
         let results = self.results(&picks, &scope);
         self.finish(Some(&scope), results, None)
-    }
-
-    fn requires_error(&self) -> Option<String> {
-        let requires = self.loaded.config.requires.as_ref()?;
-        let path = config_file::PATH;
-        match satisfies(requires, &self.request.version) {
-            Ok(true) => None,
-            Ok(false) => Some(format!(
-                "{path}: requires: this config needs garita {}, and this is garita {}",
-                requires.text, self.request.version
-            )),
-            Err(e) => Some(format!(
-                "{path}: requires: garita's own version `{}` cannot be compared: {e}",
-                self.request.version
-            )),
-        }
     }
 
     fn results(&self, picks: &[Pick<'_>], scope: &Resolved) -> Vec<CheckResult> {
@@ -346,6 +330,22 @@ impl<'a> Session<'a> {
             );
             finding(GARITA, severity, "budget", message)
         })
+    }
+}
+
+/// Why the config's `requires` rules out this garita, when it does.
+pub(crate) fn requires_error(config: &Config, version: &str) -> Option<String> {
+    let requires = config.requires.as_ref()?;
+    let path = config_file::PATH;
+    match satisfies(requires, version) {
+        Ok(true) => None,
+        Ok(false) => Some(format!(
+            "{path}: requires: this config needs garita {}, and this is garita {version}",
+            requires.text
+        )),
+        Err(e) => Some(format!(
+            "{path}: requires: garita's own version `{version}` cannot be compared: {e}"
+        )),
     }
 }
 

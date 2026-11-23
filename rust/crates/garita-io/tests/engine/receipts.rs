@@ -142,3 +142,35 @@ fn reruns_after_a_push_failure_name_the_trigger() {
     let none = out.report.checks.iter().find(|c| c.name == "none").unwrap();
     assert_eq!(none.rerun.as_deref(), Some("garita run --trigger ci none"));
 }
+
+#[test]
+fn a_batched_runs_output_tail_is_the_first_failing_batch_not_the_last() {
+    let repo = Repo::new();
+    let tool = repo.tool(
+        "lint",
+        "for f; do case \"$f\" in *target*) echo \"bad $f\" >&2; exit 1;; esac; done\necho \"$@\"\nexit 0",
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n"
+    ));
+    let dir = "d".repeat(180);
+    for i in 0..1800 {
+        let name = if i == 5 {
+            format!("{dir}/target.ts")
+        } else {
+            format!("{dir}/f{i:05}.ts")
+        };
+        repo.write(&name, "");
+    }
+    repo.stage(&[&dir]);
+    let out = repo.run();
+    assert_eq!(out.exit_code(), 1);
+    let receipt = repo.receipt_of(&out.report);
+    let lint = receipt.checks.iter().find(|c| c.name == "lint").unwrap();
+    assert!(lint.output_tail.contains("bad "), "{}", lint.output_tail);
+    assert!(lint.output_tail.contains("target.ts"));
+    let log = fs::read_to_string(repo.root().join(&lint.output)).unwrap();
+    assert_eq!(log.matches("==> ").count(), log.matches("<==").count());
+    assert!(log.matches("==> ").count() >= 3);
+    assert!(log.trim_end().ends_with(".ts"));
+}

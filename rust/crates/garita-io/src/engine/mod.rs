@@ -1,13 +1,13 @@
 //! `garita run` end to end: config, scope, checks, verdict and receipt (RFC-1 §2–§5, §8).
 
 mod exec;
-mod finding;
+pub(crate) mod finding;
 mod judge;
 mod plan;
 mod record;
-mod scope;
+pub(crate) mod scope;
 mod select;
-mod session;
+pub(crate) mod session;
 mod summary;
 mod turbo;
 
@@ -16,7 +16,7 @@ use std::time::SystemTime;
 
 use garita_core::report::{Report, RunContext, Trigger};
 
-pub use summary::summary;
+pub use summary::{error_lines, summary};
 
 /// The time source for a run's start and finish.
 pub trait Clock: Send + Sync {

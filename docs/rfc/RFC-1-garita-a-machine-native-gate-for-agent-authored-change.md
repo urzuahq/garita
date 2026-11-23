@@ -351,9 +351,14 @@ real parsers, so a finding carries file, line, rule and message:
 An installed git hook exits non-zero, with a message, when `garita` is not on the machine or is older
 than the config's `requires`. A machine without garita must not read as a pass.
 
-`garita doctor` reports a target branch that does not require garita's status before merging, and a
-merge queue whose CI does not run on the queue's merged result. In both cases a check that looks
-required never gates.
+`garita doctor` says whether the gate will run here: a missing, foreign or outdated hook, a tool a
+check names that is not on the machine, receipts that git does not ignore, `garita` itself missing
+from `PATH`. It changes nothing. `garita hooks install` never overwrites a hook it did not write
+unless told to with `--replace`, and writes both hooks or neither.
+
+From Phase 1, `doctor` also reports a target branch that does not require garita's status before
+merging, and a merge queue whose CI does not run on the queue's merged result. In both cases a check
+that looks required never gates.
 
 `merge.mode` decides what a green merge gate does. `status` posts a `garita/merge` commit status on the
 PR's head, which branch protection can require, and merges nothing. `auto` posts the status and turns on

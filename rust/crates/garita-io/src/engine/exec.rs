@@ -119,6 +119,17 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
     }
     let duration = clock.elapsed();
     let output = main;
+    let tail = match parts.len() {
+        0 => String::new(),
+        1 => output.as_deref().map(read_tail).unwrap_or_default(),
+        n => {
+            let failed = runs.iter().position(|r| !succeeded(&r.outcome));
+            parts
+                .get(failed.unwrap_or(n - 1).min(n - 1))
+                .map(|(_, path)| read_tail(path))
+                .unwrap_or_default()
+        }
+    };
     if let (Some(main), true) = (&output, parts.len() > 1) {
         if let Err(e) = join_parts(main, &parts) {
             let reason = format!("could not join the output of {name}: {e}");
@@ -133,7 +144,6 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
             });
         }
     }
-    let tail = output.as_deref().map(read_tail).unwrap_or_default();
     Executed {
         runs,
         started,
@@ -142,6 +152,10 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
         output,
         tail,
     }
+}
+
+fn succeeded(outcome: &Result<Outcome, String>) -> bool {
+    matches!(outcome, Ok(Outcome::Ran(f)) if f.exit_code == Some(0))
 }
 
 fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: &Path) -> UnitRun {
