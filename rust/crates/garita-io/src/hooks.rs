@@ -11,7 +11,7 @@ use crate::git;
 use crate::verdict::{self, Verdict, finding};
 
 /// Raised when the script changes in a way an installed hook must be rewritten for.
-pub const HOOK_FORMAT: u32 = 1;
+pub const HOOK_FORMAT: u32 = 2;
 const MARKER: &str = "# garita hook format ";
 
 /// The hooks garita installs, with the trigger each runs.
@@ -23,11 +23,28 @@ pub type Script = fn(&str, Trigger) -> String;
 
 /// Every hook format garita has written, oldest first; a file is garita's only when it is
 /// byte for byte one of these.
-pub const FORMATS: &[(u32, Script)] = &[(1, script_v1)];
+pub const FORMATS: &[(u32, Script)] = &[(1, script_v1), (2, script_v2)];
 
 /// The script for one hook in the current format.
 pub fn script(name: &str, trigger: Trigger) -> String {
-    script_v1(name, trigger)
+    script_v2(name, trigger)
+}
+
+/// Like format 1, but at a terminal the verdict on stdout is dropped; the summary is on stderr.
+fn script_v2(name: &str, trigger: Trigger) -> String {
+    let t = trigger.as_str();
+    format!(
+        "#!/bin/sh\n\
+         {MARKER}2: written by `garita hooks install`, which rewrites this file\n\
+         if ! command -v garita >/dev/null 2>&1; then\n  \
+         echo \"garita: the {name} hook needs garita, which is not on PATH; this {t} is blocked\" >&2\n  \
+         exit 2\n\
+         fi\n\
+         if [ -t 1 ]; then\n  \
+         exec garita run --trigger {t} >/dev/null\n\
+         fi\n\
+         exec garita run --trigger {t}\n"
+    )
 }
 
 /// Fails closed when `garita` is missing and leaves the verdict's exit code to `exec`.

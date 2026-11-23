@@ -380,6 +380,85 @@ fn oxfmt_list_mode_takes_the_passed_count() {
     );
 }
 
+#[test]
+fn oxfmt_no_files_message_in_a_task_log_is_nothing() {
+    let cases = [
+        "check-no-files-matched",
+        "check-no-files-matched-allowed",
+        "check-nonexistent-path",
+        "list-different-no-files-matched",
+        "list-different-no-files-matched-allowed",
+        "list-different-nonexistent-path",
+    ];
+    for case in cases {
+        let r = recording(OXFMT, case);
+        let log = format!("{}{}", r.stdout, r.stderr);
+        for exit in [0, 2] {
+            let output = ToolOutput {
+                stdout: &log,
+                stderr: "",
+                exit_code: Some(exit),
+            };
+            let context = ParseContext {
+                cwd: &r.cwd,
+                files: None,
+            };
+            let parsed = Adapter::Oxfmt.parse(&output, &context);
+            let at = format!("{case} exit {exit}");
+            assert_eq!(
+                parsed.outcome.name(),
+                "nothing",
+                "{at}: {:?}",
+                parsed.outcome
+            );
+            assert!(parsed.findings.is_empty(), "{at}: {:?}", parsed.findings);
+            assert_eq!(parsed.examined.get(FILES), Some(&0), "{at}");
+        }
+    }
+}
+
+#[test]
+fn oxfmt_a_sentence_in_the_output_is_never_a_file() {
+    let sentence = "Expected at least one target file. All matched files may have been excluded by ignore rules.";
+    let notice = "No config found, using defaults. Please add a config file.";
+    let cwd = "pkg";
+    for (stdout, exit) in [
+        (format!("{sentence}\n"), 2),
+        (format!("{notice}\nsrc/a.ts\n"), 1),
+        (
+            format!(
+                "Checking formatting...\n\n{notice}\nsrc/a.ts (0ms)\n\nFormat issues found in above 1 files. Run without `--check` to fix.\n"
+            ),
+            1,
+        ),
+    ] {
+        let output = ToolOutput {
+            stdout: &stdout,
+            stderr: "",
+            exit_code: Some(exit),
+        };
+        let context = ParseContext { cwd, files: None };
+        let parsed = Adapter::Oxfmt.parse(&output, &context);
+        for finding in &parsed.findings {
+            let file = finding.file.as_deref().unwrap_or_default();
+            assert!(!file.contains(". ") && !file.contains(sentence), "{file}");
+            assert_eq!(file, "pkg/src/a.ts");
+        }
+    }
+    let output = ToolOutput {
+        stdout: "Something went wrong: bad config\n",
+        stderr: "",
+        exit_code: Some(2),
+    };
+    let parsed = Adapter::Oxfmt.parse(&output, &ParseContext { cwd, files: None });
+    assert!(
+        parsed
+            .findings
+            .iter()
+            .all(|f| f.rule == "oxfmt/unrecognized-output")
+    );
+}
+
 fn tsc_table(nonexistent: &'static str) -> Vec<Expect> {
     let ts2322 = "tsc/TS2322";
     let assign = "Type 'string' is not assignable to type 'number'.";

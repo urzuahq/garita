@@ -15,7 +15,12 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
         return Parsed::killed();
     };
     let said_no_files = |l: &str| NO_FILES.iter().any(|n| l.trim_start().starts_with(n));
-    if output.stderr.lines().any(said_no_files) {
+    if output
+        .stderr
+        .lines()
+        .chain(output.stdout.lines())
+        .any(said_no_files)
+    {
         return Parsed::from_findings(Vec::new(), Some(0));
     }
     if output.stdout.lines().any(|l| l.trim() == HEADER) {
@@ -45,6 +50,7 @@ fn parse_check(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -
         .iter()
         .filter(|l| !l.is_empty())
         .map(|l| strip_duration(l))
+        .filter(|l| plausible_path(l))
         .collect();
     let stated = lines
         .get(end)
@@ -59,6 +65,7 @@ fn parse_check(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -
 fn parse_list(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -> Parsed {
     let mut files = context.files;
     let mut listed = Vec::new();
+    let mut ignored = false;
     for line in output
         .stdout
         .lines()
@@ -67,14 +74,20 @@ fn parse_list(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) ->
     {
         match finished_count(line) {
             Some(count) => files = Some(count),
-            None => listed.push(line),
+            None if plausible_path(line) => listed.push(line),
+            None => ignored = true,
         }
     }
     match (exit, listed.is_empty()) {
-        (0, true) => Parsed::from_findings(Vec::new(), files),
+        (0, true) if !ignored => Parsed::from_findings(Vec::new(), files),
         (1, false) => Parsed::from_findings(findings(&listed, context.cwd), files),
         _ => unreadable(output, exit),
     }
+}
+
+/// A sentence or message (as in a task log that merges both streams) is not a file path.
+fn plausible_path(line: &str) -> bool {
+    !(line.ends_with('.') || line.contains(". ") || line.contains(": ") || line == HEADER)
 }
 
 fn findings(listed: &[&str], cwd: &str) -> Vec<ToolFinding> {
