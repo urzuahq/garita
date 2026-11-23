@@ -140,7 +140,7 @@ fn script_v0(name: &str, trigger: Trigger) -> String {
 
 #[test]
 fn an_exact_older_format_script_is_garitas_in_that_format() {
-    let formats: &[(u32, hooks::Script)] = &[(0, script_v0), (1, hooks::script)];
+    let formats: &[(u32, hooks::Script)] = &[(0, script_v0), (2, hooks::script)];
     let old = script_v0("pre-push", Trigger::Push);
     assert_eq!(
         hooks::classify(&old, "pre-push", Trigger::Push, formats),
@@ -154,7 +154,7 @@ fn an_exact_older_format_script_is_garitas_in_that_format() {
     let current = hooks::script("pre-push", Trigger::Push);
     assert_eq!(
         hooks::classify(&current, "pre-push", Trigger::Push, hooks::FORMATS),
-        Kind::Garita(1)
+        Kind::Garita(2)
     );
     assert!(!hooks::classify(&current, "pre-commit", Trigger::Commit, hooks::FORMATS).is_garita());
 }
@@ -330,4 +330,106 @@ fn uninstall_removes_garitas_hooks_and_leaves_a_foreign_one() {
         fs::read_to_string(dir.join("pre-push")).unwrap(),
         "#!/bin/sh\nnpm test\n"
     );
+}
+
+/// The format-1 script, as installed by the release that wrote it.
+fn v1_text(name: &str, trigger: &str) -> String {
+    format!(
+        "#!/bin/sh\n# garita hook format 1: written by `garita hooks install`, which rewrites this file\nif ! command -v garita >/dev/null 2>&1; then\n  echo \"garita: the {name} hook needs garita, which is not on PATH; this {trigger} is blocked\" >&2\n  exit 2\nfi\nexec garita run --trigger {trigger}\n"
+    )
+}
+
+fn write_v1(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    for (name, trigger) in HOOKS {
+        let path = dir.join(name);
+        fs::write(&path, v1_text(name, trigger.as_str())).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[test]
+fn the_format_one_script_is_garitas_and_older() {
+    for (name, trigger) in HOOKS {
+        let text = v1_text(name, trigger.as_str());
+        assert_eq!(
+            hooks::classify(&text, name, trigger, hooks::FORMATS),
+            Kind::Garita(1)
+        );
+        assert_ne!(text, hooks::script(name, trigger));
+    }
+}
+
+#[test]
+fn installing_over_format_one_hooks_updates_them_without_replace() {
+    let repo = configured();
+    let dir = repo.root().join(".git/hooks");
+    write_v1(&dir);
+    let report = install(&repo.root(), false);
+    assert_eq!(report.exit_code(), 0, "{report:#?}");
+    assert_eq!(rules(&report, "garita"), ["hook-updated", "hook-updated"]);
+    assert_installed(&dir);
+    let report = install(&repo.root(), false);
+    assert_eq!(
+        rules(&report, "garita"),
+        ["hook-unchanged", "hook-unchanged"]
+    );
+}
+
+#[test]
+fn the_format_two_script_silences_stdout_only_at_a_terminal() {
+    let text = hooks::script("pre-commit", Trigger::Commit);
+    assert!(text.starts_with("#!/bin/sh\n"));
+    assert!(text.contains("command -v garita"));
+    assert!(
+        text.contains("if [ -t 1 ]; then\n  exec garita run --trigger commit >/dev/null\nfi\n")
+    );
+    assert!(text.ends_with("exec garita run --trigger commit\n"));
+}
+
+fn hook_script_with_stub(repo: &Repo) -> PathBuf {
+    repo.tool(
+        "garita",
+        "echo '{\"verdict\":1}'\necho 'the summary' >&2\nexit 3",
+    );
+    install(&repo.root(), false);
+    repo.root().join(".git/hooks/pre-commit")
+}
+
+fn bin_path(repo: &Repo) -> String {
+    format!("{}:/usr/bin:/bin", repo.base().join("bin").display())
+}
+
+#[test]
+fn the_format_two_hook_prints_the_verdict_when_stdout_is_a_pipe() {
+    let repo = configured();
+    let hook = hook_script_with_stub(&repo);
+    let out = std::process::Command::new(&hook)
+        .env("PATH", bin_path(&repo))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "{\"verdict\":1}\n");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "the summary\n");
+}
+
+#[test]
+fn the_format_two_hook_hides_the_verdict_at_a_terminal() {
+    if !Path::new("/usr/bin/script").exists() {
+        eprintln!(
+            "skipped: `script` is not installed, so there is no pseudo-terminal to run under"
+        );
+        return;
+    }
+    let repo = configured();
+    let hook = hook_script_with_stub(&repo);
+    let out = std::process::Command::new("/usr/bin/script")
+        .args(["-qec", hook.to_str().unwrap(), "/dev/null"])
+        .env("PATH", bin_path(&repo))
+        .output()
+        .unwrap();
+    let shown = String::from_utf8_lossy(&out.stdout);
+    assert!(shown.contains("the summary"), "{shown}");
+    assert!(!shown.contains("verdict"), "{shown}");
+    assert_eq!(out.status.code(), Some(3), "{shown}");
 }
