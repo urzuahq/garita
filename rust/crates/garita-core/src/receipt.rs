@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::object_id::ObjectId;
 use crate::report::{CheckKind, CheckStatus, Examined, Report, RunStatus, Scope, Trigger};
 
 pub const RECEIPT_VERSION: u32 = 1;
@@ -57,9 +58,9 @@ pub struct Receipt {
     pub started_at: String,
     pub finished_at: String,
     pub trigger: Trigger,
-    pub commit: Option<String>,
-    pub tree: String,
-    pub worktree: String,
+    pub commit: Option<ObjectId>,
+    pub tree: ObjectId,
+    pub worktree: ObjectId,
     pub dirty: bool,
     pub config_hash: String,
     pub machine: String,
@@ -147,8 +148,8 @@ mod tests {
             finished_at: "2026-11-21T03:15:03Z".into(),
             trigger: Trigger::Commit,
             commit: None,
-            tree: TREE.into(),
-            worktree: TREE.into(),
+            tree: TREE.parse().unwrap(),
+            worktree: TREE.parse().unwrap(),
             dirty: false,
             config_hash: "abc".into(),
             machine: "host".into(),
