@@ -91,7 +91,8 @@ checks:
   output where it reports one. This is how a run over nothing is told apart from a pass.
 - **The kind of run.** One of: clean, findings, ran on nothing, or crashed. The adapter decides this
   from the output and never from the exit code alone. A crash is a tool that was killed or timed
-  out (RFC-1's `on_crash`). A tool that exited non-zero with output the adapter could not read is
+  out, or one that exited zero with output its adapter expected to read and could not (RFC-1's
+  `on_crash`). A tool that exited non-zero with output the adapter could not read is
   not a crash: it is one finding at `error`, `<tool>/unrecognized-output`, carrying the lines of its
   output that look like errors and the last lines of each stream. A new tool version that words
   something differently then blocks and says so, and never passes as a warning. A run over nothing
