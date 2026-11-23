@@ -127,6 +127,8 @@ pub fn classify(text: &str, name: &str, trigger: Trigger, formats: &[(u32, Scrip
 }
 
 /// Whether a line runs `garita run` as a command at `trigger`; `commit` is its default trigger.
+/// A line that joins it to another command (`|| true`, `&`, `;`) does not count, since the hook
+/// may then not act on the verdict.
 fn calls_garita(text: &str, trigger: Trigger) -> bool {
     text.lines().any(|line| {
         let line = line.trim();
@@ -134,7 +136,9 @@ fn calls_garita(text: &str, trigger: Trigger) -> bool {
         let Some(rest) = line.strip_prefix("garita run") else {
             return false;
         };
-        if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+        if !(rest.is_empty() || rest.starts_with(char::is_whitespace))
+            || rest.contains(['|', '&', ';'])
+        {
             return false;
         }
         let words: Vec<&str> = rest.split_whitespace().collect();

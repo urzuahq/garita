@@ -20,7 +20,9 @@ In development: the RFCs are in draft and there is no release yet.
   nothing blocks, 1 when something does, and 2 when it could not run.
 - Built-in adapters read oxlint, oxfmt and tsc output, and any other command through its exit code.
   A task run through turbo is read from turbo's own run summary.
-- `garita doctor` and `garita hooks install` are the remaining commands of the first phase.
+- `garita hooks install` writes the `pre-commit` and `pre-push` hooks into the directory git uses,
+  and never overwrites a hook it did not write. `garita doctor` says whether the gate will run on
+  this machine.
 
 To try it, build from source with Rust 1.87 or later:
 
