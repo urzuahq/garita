@@ -8,7 +8,7 @@ use garita_core::report::{Report, RunStatus, Severity, Trigger};
 use garita_io::doctor::{self, Request};
 use garita_io::hooks;
 
-use crate::support::{Repo, assert_contract, finding, git_in, rules};
+use crate::support::{Repo, assert_contract, finding, git_in, run_rules};
 
 /// A repository where everything doctor looks at is in order: a resolvable tool, both hooks,
 /// receipts ignored, `garita` on PATH and a check at each hook's trigger.
@@ -34,7 +34,6 @@ fn doctor_at(dir: &Path, path: Option<OsString>) -> Report {
         path,
     });
     assert_contract(&v.report);
-    assert!(v.summary.starts_with("garita doctor: "), "{}", v.summary);
     v.report
 }
 
@@ -55,7 +54,7 @@ impl Unhooked for Repo {
 }
 
 fn has(report: &Report, rule: &str) -> bool {
-    rules(report, "garita").contains(&rule)
+    run_rules(report).contains(&rule)
 }
 
 fn hook(repo: &Repo, name: &str) -> std::path::PathBuf {
@@ -125,7 +124,7 @@ fn a_missing_hook_is_a_warning_whose_next_action_installs_it() {
     let report = doctor(&repo);
     assert_eq!(report.status, RunStatus::Warn);
     assert_eq!(
-        rules(&report, "garita")
+        run_rules(&report)
             .iter()
             .filter(|r| **r == "doctor/hook-missing")
             .count(),
@@ -327,7 +326,7 @@ fn native_and_builtin_checks_warn_that_this_version_does_not_run_them() {
     let repo = healthy();
     repo.config("schema_version: 1\nchecks:\n  lint:\n    run: lint {files}\n    on: [commit, push]\n  records:\n    native: urzua\n    on: [ci]\n  clean:\n    builtin: clean-tree\n    on: [ci]\n");
     let report = doctor(&repo);
-    let count = rules(&report, "garita")
+    let count = run_rules(&report)
         .iter()
         .filter(|r| **r == "doctor/form-unsupported")
         .count();

@@ -1,0 +1,17 @@
+{
+  "blocking": false,
+  "checks": [],
+  "commit": null,
+  "error": "/repo/.garita/config.yaml does not exist",
+  "examined": {},
+  "findings": [],
+  "next_action": null,
+  "next_action_inputs": [],
+  "next_action_reason": null,
+  "receipt": null,
+  "schema_version": 1,
+  "scope": null,
+  "status": "not-run",
+  "tree": null,
+  "trigger": null
+}

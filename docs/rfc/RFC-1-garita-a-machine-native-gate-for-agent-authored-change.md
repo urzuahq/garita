@@ -4,18 +4,17 @@ Status: Draft
 Date: 2026-11-21
 Author: beauwilliams
 ---
-# 1 — Garita: a machine-native gate for agent-authored change
+# 1 — garita: a machine-native gate for agent-authored change
 
 ## Summary
 
-Garita runs the checks a change must pass (lint, format, types, tests, record checks, anything with an
+garita runs the checks a change must pass (lint, format, types, tests, record checks, anything with an
 exit code) and returns one verdict that an agent, a git hook and CI all read the same way. It is
 declared once, in `.garita/config.yaml`, and run from four surfaces: commit, push, CI and merge.
-Its output follows the agent CLI contract (agent-cli-kit RFC-1), which starts from what urzua already
-prints: one JSON object on stdout with a `status`, `blocking`, typed `findings[]` and a `next_action`,
-the one command to run next.
+Its output is a run report of the agent CLI contract, which agent-cli-kit owns (RFC-1 for the base and
+the gate profile, RFC-3 for the run profile). garita implements that contract and defines none of it.
 
-Garita is the control plane for the checks on a change: it decides what runs, where and within what
+garita is the control plane for the checks on a change: it decides what runs, where and within what
 budget, and gives the verdict. The tools it runs do the judging. That is the line between it and
 urzua, which checks the records a change traces to and never the change itself. The two compose through the shared contract and through
 **receipts**: each garita run writes a self-dating, self-scoping record of what ran, against which
@@ -55,14 +54,14 @@ where it falls short:
 
 ### 1. Mission and principles
 
-**Mission.** Garita is the control plane that gates agent-authored change: it runs the tools that
+**Mission.** garita is the control plane that gates agent-authored change: it runs the tools that
 check a change at the narrowest scope that covers the risk, holds the gate itself to declared budgets, and
 returns one machine-first verdict that agents, hooks and CI branch on without re-reading prose.
 
 **Principles**, each inherited from urzua where urzua already holds it:
 
-- **Machine-first.** stdout is exactly one JSON object; everything else goes to stderr. The exit code
-  stays the gate (urzua RFC-3).
+- **Machine-first.** The report is one JSON object on stdout (§5), and the exit code stays the gate
+  (urzua RFC-3).
 - **No silent no-ops.** A check that examined nothing is a finding, never a pass. A trigger, scope or
   glob that matches nothing is reported.
 - **Deterministic by default.** A model-judged check warns. It blocks only where a declared risk
@@ -79,9 +78,9 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
 - **A missing config is not a pass.** With no `.garita/config.yaml`, `garita run` is `not-run`, exit
   2, and its `error` names the missing file. An unparseable config, a config that fails its schema
   and an unknown key are the same.
-- **Orchestrate, don't replace.** Garita calls Turbo, cargo, oxlint, tsc, Vitest and urzua. It does not
+- **Orchestrate, don't replace.** garita calls Turbo, cargo, oxlint, tsc, Vitest and urzua. It does not
   cache build outputs or compute a package graph itself.
-- **Opt-in configuration.** Garita installs nothing on its own: a repository has a gate only once it
+- **Opt-in configuration.** garita installs nothing on its own: a repository has a gate only once it
   adds a config and runs `garita hooks install`. Every key has a default, and a repository declares
   only what it changes.
 
@@ -91,7 +90,7 @@ A **check** is a command plus a parser. It has a **kind** (`lint`, `format`, `ty
 `build`, `records` or `other`), which its adapter supplies and the config can override, because a
 reader needs to know what a pass proves: a passing lint does not verify a claim about behaviour.
 
-Garita runs a check's command directly, with no shell, so the exit code it records is the tool's own.
+garita runs a check's command directly, with no shell, so the exit code it records is the tool's own.
 A pipeline hides a failing tool behind the exit code of its last command, and a hand-written hook
 rarely sets `pipefail`. A check that needs a shell names one in its command and takes that risk
 openly. A `run` string is split into arguments by POSIX shell quoting rules, with no expansion of
@@ -124,8 +123,8 @@ system's limit on a command line.
 
 `garita run --files <paths>` replaces the trigger's scope with the files given, and
 `garita run <check>` runs the named checks whatever their `on` list says. Findings that belong to
-the run and not to a check (`scope-widened`, `partly-staged`, a trigger's `budget`) are attributed
-to `garita`, which is therefore not a name a check can take.
+the run and not to a check (`scope-widened`, `partly-staged`, a trigger's `budget`) carry no `check`
+(§5).
 
 Each check and each trigger declares a **budget**, and a budget is a gate in its own right (§4).
 
@@ -196,9 +195,9 @@ Only `schema_version` is required. The defaults that matter most:
   with no `parser` uses `exit-code`. The one builtin is `clean-tree`.
 - A check with no `on` runs at every trigger.
 - A check reports every finding its tool gives unless it sets `min_severity` (`error`, `warning` or
-  `info`). Findings below it are left out of the verdict and counted in the check's `suppressed`,
-  so a repository with a backlog of warnings can keep them out of an agent's way without hiding
-  that they exist. Garita's own findings about a check are never suppressed.
+  `info`). Findings below it are left out of the verdict and counted in the check's `suppressed`
+  (agent-cli-kit RFC-3 §3), so a repository with a backlog of warnings can keep them out of an
+  agent's way without hiding that they exist. garita's own findings about a check are never suppressed.
 - A check runs from the repository root unless it sets `cwd`, a directory inside the repository.
   Files outside a check's `cwd` or its partition roots are left out of that check, and an
   `outside-root` finding at `info` says so.
@@ -222,7 +221,7 @@ finding at `warning`.
 Problems in an agentic stack rarely arrive as a failure. They creep in: a check grows from two seconds to
 forty over a month, a test suite doubles, a hook that ran on staged files starts running on the tree.
 Each step is too small to notice, and the sum is agents waiting, CI minutes spent and money burned.
-Garita treats a limit the same way it treats a lint rule: crossing it is a finding.
+garita treats a limit the same way it treats a lint rule: crossing it is a finding.
 
 - **Budget findings.** A check or trigger that runs over its budget produces a `budget` finding, with
   the measured value, the limit and the receipt that proves it. `on_exceed` decides what it does: `warn`
@@ -251,10 +250,26 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
   parser or plugin can report others (files examined, tests run, bundle size, dependency count) and a
   budget can name them. The mechanism is the same: measured against a limit and against its own
   history.
-- **Budgets are visible.** `garita budgets` prints each check's limit, its current median and its trend
-  from receipts, so a slow check is a number someone can point at.
+- **Budgets are visible.** `garita budgets` reports each check's limit, its current median and its
+  trend from receipts, as a JSON report like every other garita command's, so a slow check is a
+  number an agent can read.
 
-### 5. The output contract
+### 5. Output
+
+garita's output is a run report. Its shape is not garita's: agent-cli-kit owns it, and garita
+implements it. The base keys, the exit codes and the rules for `not-run` are agent-cli-kit RFC-1 §1.
+`blocking`, `findings`, `examined` and the fields of a finding are its §2. The run profile is
+agent-cli-kit RFC-3: the report's `checks` and the fields of each entry (§1), `trigger`, `commit`,
+`tree`, `scope` and `receipt` (§1 and §2), `suppressed` (§3), `check` on a finding (§4) and the
+`<source>/<rule>` form of a wrapped tool's rule id (§5). This record repeats none of that. It states
+what garita does with those keys, and, under garita's extended contract below, what garita adds
+beyond them.
+
+**One JSON object, nothing else.** stdout is exactly one JSON object. garita prints nothing on
+stderr except a diagnostic when garita itself cannot do its job, and nothing a reader needs exists
+only on stderr.
+
+The report below illustrates a run report. It defines nothing.
 
 ```json
 {
@@ -296,38 +311,59 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 }
 ```
 
-- `status` is `pass`, `warn`, `fail` or `not-run`, and `blocking` is true exactly when the exit code
-  is 1. Exit codes follow the contract: `0` ran and nothing blocks (`pass`, `warn`); `1` ran and
-  something blocks (`fail`); `2` could not run (`not-run`: a broken install or config, or a tool
-  that cannot be started). A hook stops the commit on 1 and on 2.
-- `findings` holds every finding from every check in one list, each naming its `check`. A finding
-  carries `column` and a `fingerprint` that is stable across runs, the fields SARIF and code-quality
-  reports need. The top-level `examined` is the total across checks.
+What garita does with the report:
+
+- **Which status a run gets, and the exit code.** The words a run and a check may have are the run
+  profile's (agent-cli-kit RFC-3 §1, version 1.1), and this record does not define them. A
+  check is `skipped` when it did not run, with a `no-input` or `demoted` finding saying why. `pass`
+  and `warn` exit 0, `fail` exits 1 and is the only blocking status, and `not-run` exits 2: a broken
+  install or config, or a tool that cannot be started. A hook stops the commit on 1 and on 2.
+- **One list of findings.** `findings` holds every finding from every check, each naming its
+  `check`. A finding about the run itself, which no check produced (`scope-widened`,
+  `partly-staged`, a trigger's `budget`), carries no `check`, as the run profile says. The
+  top-level `examined` is the total across checks.
 - **When outcomes mix, `not-run` wins.** If any check could not start, the run is `not-run`, exit 2
   and `blocking` false, whatever else failed, because a gate that did not fully run has no verdict.
   Otherwise a failed check or any finding at `error` makes it `fail`, a check that warned or any
   finding at `warning` makes it `warn`, and a run with neither is `pass`. A check's own status
   counts even when it produced no finding, so a tool that failed without saying why still blocks.
   Every finding is still listed.
-- **A `not-run` report has the same keys as any other.** It always prints `blocking` (false),
-  `findings` and `examined`, empty when nothing ran, plus an `error` saying why. The contract lets a
-  tool leave those three out when it could not run; garita prints them so a reader never has to
+- **A `not-run` report has the same keys as any other.** The gate profile lets a command that could
+  not run leave out `blocking`, `findings` and `examined`. garita always prints them: `blocking`
+  false, the other two empty when nothing ran, plus an `error` saying why. A reader never has to
   branch on whether they exist.
-- A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
-  finding saying why) or `not-run`.
-- A finding's `severity` is `error`, `warning` or `info`.
-- `next_action` is the narrowest command that re-runs what failed: the failing checks, at the same
-  trigger, on the failing files when every one of them has files. It never names anything that is
-  not a check: an error that belongs to the run, such as a trigger over its budget, re-runs the
-  whole trigger. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
-  `next_action_reason` says why, and `next_action_inputs` lists any placeholders, each as urzua
-  prints them: the placeholder, the flag it belongs to and what to put there.
-- `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),
-  which is how a no-op is caught.
-- `commit` is `null` at the commit trigger, where no commit exists yet. `tree` is present whenever
-  the run started in a repository; a run that could not start at all has none.
-- `--format sarif` and `--format junit` render the same result for code scanning and CI summaries. JSON
-  is the source; the others are views of it.
+- **A check that examined nothing.** A check whose `examined` counts are all zero is a `no-op`
+  finding (§3), never a pass.
+- **`commit` is `null` at the commit trigger,** where no commit exists yet. `tree` is present
+  whenever the run started in a repository; a run that could not start at all has none.
+- **Suppression.** A check's `min_severity` (§3) decides what is counted in its `suppressed`.
+- **What `garita describe` declares.** It prints the object agent-cli-kit RFC-1 §3 defines. It declares
+  `run`, `doctor` and `hooks install`, each with profile `run`, including the two that select no
+  checks. `run` declares the `base-ref` scope argument. It does not declare `paths`: its positional
+  arguments are check names, so it takes files through `--files` (agent-cli-kit RFC-3 §6).
+
+#### garita's extended contract
+
+These are garita's own conventions and keys beyond agent-cli-kit's base and run profile. They are
+not the shared contract, they contradict nothing in it, and a reader that ignores them loses nothing
+the shared contract promises.
+
+- **`next_action`.** It holds the narrowest command that re-runs what failed: the failing checks, at
+  the same trigger, on the failing files when every one of them has files. It never names anything
+  that is not a check: an error that belongs to the run, such as a trigger over its budget, re-runs
+  the whole trigger. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+  `next_action_reason` is a count of what failed, such as `1 error in 1 check`.
+- **`fingerprint`.** An opaque string, stable across runs for the same finding. How garita computes
+  it is its own, and a reader must not parse it.
+- **`message`.** Text for a reader that promises no layout. Output a reader should parse gets a key.
+- **`examined` units.** garita uses `files`, `tests` and `packages`.
+- **Rule ids.** The wrapped tools' ids follow the `<source>/<rule>` form of agent-cli-kit RFC-3 §5.
+  The ids garita raises itself are its own, such as `no-op`, `no-input`, `demoted`, `budget`,
+  `crash`, `scope-widened` and `partly-staged` from a run, and the `doctor/` ids from
+  `garita doctor`. This record does not list them all.
+- **`risk`, `system` and `verdict`.** Keys proposed in RFC-3 §6, not built. They are garita's until a
+  second tool needs them and they are proposed to agent-cli-kit.
+- **The plugin protocol** (§6) is garita's own.
 
 ### 6. Parsers
 
@@ -342,17 +378,18 @@ real parsers, so a finding carries file, line, rule and message:
 - **Read the output, not the exit code.** A tool can exit 1 for findings, for a bad config and for
   having matched no files. RFC-2 makes a parser one part of an adapter, which also says which of
   those happened.
-- **Plugins** are a subprocess protocol: JSON in on stdin, a check result out on stdout, with `--describe`
-  for the plugin's name, inputs and schema version. A parser outside the first set is a plugin, not a
+- **Plugins** are a subprocess protocol of garita's own (its extended contract, §5): JSON in on
+  stdin, a check result out on stdout, with `--describe` for the plugin's name, inputs and schema
+  version. A parser outside the first set is a plugin, not a
   change to garita.
 
 ### 7. Surfaces
 
 | Surface | How it runs | What it adds |
 |---|---|---|
-| Git hooks | `garita hooks install` writes `pre-commit` and `pre-push` that call `garita run --trigger <hook>`, into `core.hooksPath` when one is set | The same gate for people and agents; a fresh worktree reports a missing hook through `doctor` |
+| Git hooks | `garita hooks install` writes `pre-commit` and `pre-push` that call `garita run --trigger <hook>`, into `core.hooksPath` when one is set | The same gate at every commit and push; a fresh worktree reports a missing hook through `doctor` |
 | Agent hook | A `PreToolUse` hook on the agent's shell tool that runs the trigger for `git commit` and `git push`, and blocks `--no-verify` | The agent gets the JSON verdict and `next_action` at the moment it tries to commit |
-| CI | `garita run --trigger ci --format sarif` | Same config, same verdict; no workflow re-lists the checks |
+| CI | `garita run --trigger ci` | Same config, same verdict; no workflow re-lists the checks |
 | Merge | `garita merge <PR>`: merges the PR into the target branch in a throwaway worktree, runs the `merge` trigger there, acts on `pass` as `merge.mode` says, then removes the worktree | Gates the merged result, not the branch, and works when CI is unavailable |
 
 An installed git hook exits non-zero, with a message, when `garita` is not on the machine or is older
@@ -378,24 +415,9 @@ that grants garita no authority the repository did not give it.
 
 Every run writes a receipt: the report it printed, plus what is needed to say exactly what that
 report is evidence for. A result is only evidence for the tree, the configuration and the tools that
-produced it.
-
-| Field | Meaning |
-|---|---|
-| `receipt_version` | The receipt format's version |
-| `run_id` | A ULID, unique per run |
-| `started_at`, `finished_at` | UTC times of the run |
-| `trigger` | `commit`, `push`, `ci` or `merge` |
-| `commit` | The commit's full hash, or `null` at the commit trigger |
-| `tree` | The full tree hash: the index's tree at the commit trigger, the commit's tree elsewhere |
-| `worktree` | A tree hash computed from the working files, which is what the checks saw |
-| `dirty` | Whether the working files differ from `tree` |
-| `config_hash` | A hash of `.garita/config.yaml` |
-| `machine` | The host that ran it |
-| `tool` | Garita's name and version |
-| `result` | `PASSED`, `WARNED` or `FAILED` |
-| `checks[]` | Per check: `name`, `kind`, `command`, `scope`, `tool_version`, `started_at`, `finished_at`, `duration_ms`, `exit_code`, `status`, `examined`, `output_tail`, `output` |
-| `report` | The report the run printed (§5) |
+produced it. What a receipt holds is agent-cli-kit's: its field list and the vocabulary of its
+`result` are in agent-cli-kit RFC-1 §5 and `receipt.schema.json`, where the receipt is still a
+draft, and this record does not restate them.
 
 A run that was `not-run` writes a receipt too, with `result` `FAILED`: a gate that could not run is
 not evidence of a pass.
@@ -406,20 +428,15 @@ the repository.
 A receipt is named for when it ran, `<UTC timestamp>-<trigger>-<run id>.json`, never for the commit.
 At the commit trigger no commit exists yet, and a second run must not overwrite the first: the runs
 are the history that budgets and demotion read. The tree hash, and the commit when there is one, are
-fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones, except the
+fields inside. garita keeps the last `receipts.keep` receipts and deletes older ones, except the
 last receipt in which each check ran at each trigger, which demotion reads (§4).
 
 Each check's entry records the exact command, the tool's own exit code and its times, so a receipt
-can be cited as evidence of what ran. `output_tail` is the last 4,000 characters of the check's
-output, and `output` is the path of the full output, kept beside the receipt and deleted with it.
-`examined` says whether the check looked at anything, so a test run that selected no tests does not
-read as a pass. `worktree` lets a reader tell exactly whether a check ran after the last
-edit: it did if the working files still hash to the receipt's `worktree`. That answer does not depend on comparing clocks, and it is the one decision-agent-kit's
-stop check needs (§9).
-
-A receipt's `result` uses the words of the in-toto test-result predicate (`PASSED`, `WARNED`,
-`FAILED`) and names the tree as its subject, so wrapping a receipt in a signed statement later adds
-to the format and changes nothing in it. The receipt's schema is kept in agent-cli-kit.
+can be cited as evidence of what ran. The full output of a check is kept beside the receipt and
+deleted with it. `examined` says whether the check looked at anything, so a test run that selected
+no tests does not read as a pass. `worktree` lets a reader tell exactly whether a check ran after the
+last edit: it did if the working files still hash to the receipt's `worktree`. That answer does not
+depend on comparing clocks, and it is the one decision-agent-kit's stop check needs (§9).
 
 A **local receipt** is one written on a developer's or an agent's machine; a **CI receipt** is one
 written by a CI run. A local receipt is a file anyone on that machine can edit, so it proves only what
@@ -450,12 +467,12 @@ Receipts are what make budgets work (§4) and what make the ecosystem compose (�
    `advisory: true`; its findings are capped at `warning`, so a gate's result stays reproducible. The
    exception is a check a declared risk class requires (RFC-3).
 5. **One harness adapter layer, eventually.** urzua and decision-agent-kit each ship agent adapters;
-   garita needs the same. Garita starts with its own Claude Code adapter and moves to a shared one only
+   garita needs the same. garita starts with its own Claude Code adapter and moves to a shared one only
    when all three need the same events.
 
 ### 10. What garita leaves to other tools
 
-- **Caching and the package graph** stay with Turbo and cargo. Garita passes `--affected`; it does not
+- **Caching and the package graph** stay with Turbo and cargo. garita passes `--affected`; it does not
   hash inputs.
 - **Fixing** stays with the tools. A finding's `fix` names the tool's own fix command; garita does not
   rewrite files, and the `clean-tree` check holds every check to that.
@@ -475,7 +492,7 @@ repositories waits on a decision for the whole organisation.
   when garita replaces the hand-written commit and push hooks of one TypeScript monorepo, and the old
   hooks are deleted.
 - **Phase 1:** the agent hook, `merge` with its three modes, regression findings and `garita budgets`,
-  the Vitest and cargo adapters, urzua as a native check, SARIF. Done when garita gates a Rust repository and a TypeScript
+  the Vitest and cargo adapters, urzua as a native check. Done when garita gates a Rust repository and a TypeScript
   repository in CI with the same contract.
 - **Phase 2:** urzua's `gate:` locator, decision-agent-kit reading receipts, budgets on metrics other
   than duration, and systems and risk classes (RFC-3).
@@ -486,10 +503,10 @@ repositories waits on a decision for the whole organisation.
 - **Merge authority:** a configuration point, `merge.mode` (§7), defaulting to `status`.
 - **Local receipts as evidence:** a configuration point, `evidence.accept` (§8), defaulting to `ci`.
 - **A check over budget:** a finding, and `on_exceed: demote` moves it to a later trigger (§4).
-- **The examined count:** an object with one count per unit, a key shared with urzua.
-- **The output contract:** urzua's existing shape, kept in agent-cli-kit. Exit codes are 0, 1 and 2,
-  `blocking` says whether a run blocks, and `next_action` stays a string with its reason and inputs.
-- **Garita is the control plane.** The tools it runs do the judging.
+- **The examined count:** agent-cli-kit's `examined`, one count per unit, shared with urzua.
+- **The output contract:** agent-cli-kit's, not garita's. garita implements it and keeps its own
+  additions in an extended contract (§5).
+- **garita is the control plane.** The tools it runs do the judging.
 
 ## Open questions
 
@@ -525,8 +542,9 @@ repositories waits on a decision for the whole organisation.
 ## References
 
 - urzua ADR-101: the mission and principles this RFC inherits.
-- urzua RFC-3: the stdout/stderr split, `status`, and the per-run result as history.
+- urzua RFC-3: `status` and the per-run result as history.
 - urzua RFC-27: the engine's boundary, which puts judging the change outside urzua and so inside garita.
 - decision-agent-kit SPEC-1: the stop check that receipts make exact.
-- agent-cli-kit RFC-1: the output contract and the receipt's schema.
+- agent-cli-kit RFC-1 (base, gate profile, `describe`, receipt) and RFC-3 (run profile): the output
+  contract.
 - RFC-2: adapters and native tools. RFC-3: systems and risk classes.

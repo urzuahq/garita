@@ -1,9 +1,9 @@
 use std::fs;
 
 use garita_core::receipt::{Receipt, ResultWord};
-use garita_core::report::{Report, Trigger};
+use garita_core::report::{Report, Severity, Trigger};
 
-use crate::support::Repo;
+use crate::support::{Repo, finding};
 
 fn two_check_repo() -> Repo {
     let repo = Repo::new();
@@ -92,12 +92,12 @@ fn a_receipt_that_cannot_be_written_leaves_the_verdict_standing() {
     fs::write(repo.root().join(".garita/receipts"), "not a directory").unwrap();
     let out = repo.run();
     assert_eq!(out.report.receipt, None);
+    let f = finding(&out.report, "receipt-unwritten");
+    assert_eq!((f.check.as_deref(), f.severity), (None, Severity::Info));
     assert!(
-        out.notes
-            .iter()
-            .any(|n| n.contains("could not write the receipt")),
-        "{:?}",
-        out.notes
+        f.message.contains("could not write the receipt"),
+        "{}",
+        f.message
     );
     assert_eq!(out.exit_code(), 1);
     assert_eq!(out.report.status, garita_core::report::RunStatus::Fail);

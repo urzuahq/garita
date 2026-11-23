@@ -17,7 +17,6 @@ use crate::hooks::{self, HOOK_FORMAT, HOOKS, Kind};
 use crate::receipts;
 use crate::verdict::{self, Next, Verdict, finding};
 
-const COMMAND: &str = "doctor";
 const INSTALL: &str = "garita hooks install";
 const RECEIPTS_LINE: &str = ".garita/receipts/";
 
@@ -77,20 +76,14 @@ pub fn doctor(request: &Request) -> Verdict {
         ),
     ]);
     let next = next_action(&findings);
-    verdict::verdict(COMMAND, findings, examined, next)
+    verdict::verdict(findings, examined, next)
 }
 
 /// A doctor that cannot look has nothing to suggest but the error itself.
 fn not_run(error: String) -> Verdict {
-    let mut v = verdict::not_run(COMMAND, error);
+    let mut v = verdict::not_run(error);
     v.report.next_action = None;
     v.report.next_action_reason = None;
-    v.summary = v
-        .summary
-        .lines()
-        .filter(|l| !l.starts_with("  next:"))
-        .collect::<Vec<_>>()
-        .join("\n");
     v
 }
 

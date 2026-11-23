@@ -18,7 +18,7 @@ stake.
    risk, and how far up the systems a change to each must go. Risk is the one axis the three systems
    sit on.
 
-Garita is the control plane for both. It answers no question about the change itself. It decides
+garita is the control plane for both. It answers no question about the change itself. It decides
 what runs, where, within which budget, and which evidence counts.
 
 ## Motivation
@@ -47,18 +47,18 @@ nothing more. A critical one is not done until System 2 has answered.
 
 ### 1. The control plane
 
-Garita holds four things and nothing else:
+garita holds four things and nothing else:
 
 - **what runs:** the checks, and the system each belongs to;
 - **where:** the trigger and scope (RFC-1 §2);
 - **within what:** the budgets (RFC-1 §4);
 - **what counts:** the risk classes, and which receipts are accepted as evidence (RFC-1 §8).
 
-Every answer about the change comes from a tool. Garita's own decision is always deterministic: given
+Every answer about the change comes from a tool. garita's own decision is always deterministic: given
 the same tool results, it returns the same verdict.
 
 "Control plane" names garita and nothing else. The records, with urzua as their engine, are the
-**governance plane**: people decide there, in records. Garita enforces what the records and the risk
+**governance plane**: people decide there, in records. garita enforces what the records and the risk
 classes say on every change, and returns one verdict. Systems 0, 1 and 2 are the checks the control
 plane runs. Risk is a separate axis: it says how far up the systems a change must go.
 
@@ -70,7 +70,7 @@ plane runs. Risk is a separate axis: it says how far up the systems a change mus
 | 1 | A decision model | Tools built with decision-agent-kit | No |
 | 2 | LLM inference | An LLM reviewer | No |
 
-A check declares its system, and its adapter's or its native tool's `describe` states it (RFC-2).
+A check declares its system, and its adapter's `identity` or its native tool's `describe` states it (RFC-2).
 System 0 is the default, so every RFC-1 check is a System 0 check without change.
 
 A slow deterministic check is still System 0. Running a test on the merge base to see it fail there is
@@ -133,7 +133,7 @@ RFC-1's principle is "deterministic by default". With risk classes that means:
 
 - A System 1 or System 2 check **blocks only where the change's risk class requires its system**.
   Anywhere else it is advisory and its findings are capped at `warning`, as in RFC-1.
-- Garita's part stays deterministic. It checks that the verdict exists, that its pin matches, that it
+- garita's part stays deterministic. It checks that the verdict exists, that its pin matches, that it
   came from a model the configuration allows, and that it says pass. It never judges what the model
   said.
 - **A verdict is asked once and then cited.** A model can answer differently on a second run, so a
@@ -173,7 +173,12 @@ judged only at commit or push is not enforced at all. Two rules follow:
 Budgets apply to every system. For System 2 the metric that matters is cost, which RFC-1 §4 already
 allows: a budget is a limit on any metric a check reports.
 
-### 6. Contract additions
+### 6. garita's extended contract
+
+These keys go beyond the base layer and the run profile of agent-cli-kit (RFC-1, RFC-3): `risk` on
+the report, and `system` and `verdict` on a check's entry. They are garita's own extended contract,
+not the shared contract, and they contradict nothing in it. They are not built. When a second tool
+needs them they are proposed to agent-cli-kit.
 
 ```json
 {
@@ -197,7 +202,7 @@ RFC-1 carries the three statements this RFC depends on: the principle "Determini
 §9 item 4, where a model check is advisory except where a risk class requires it; and the non-goal,
 which rules out model-judged blocking only outside a declared risk class.
 
-- urzua does not score risk; urzua RFC-27 §2 places risk scoring outside its engine. Garita owns risk.
+- urzua does not score risk; urzua RFC-27 §2 places risk scoring outside its engine. garita owns risk.
 - urzua is a System 0 native check (RFC-2) and, through RFC-1 §9's `gate:` locator, can cite a garita
   receipt as evidence. A receipt that records the system reached lets a record cite a System 2
   verdict.
@@ -214,7 +219,7 @@ System 2 checks, verdict receipts and the `risk` finding. Phases 0 and 1 run Sys
 Decided by the maintainer on 2026-11-22:
 
 - **Risk is garita's.**
-- **Garita is the control plane**, not a System 0 tool. urzua, linters and build tools are System 0.
+- **garita is the control plane**, not a System 0 tool. urzua, linters and build tools are System 0.
 - **The records are the governance plane**, with urzua as their engine (the maintainer, 2026-11-23).
   People decide there; garita enforces it. "Control plane" is used for garita only.
 - **The systems:** 0 asks whether the test exists and is linked properly; 1 asks whether it tests the
@@ -242,13 +247,13 @@ Decided by the maintainer on 2026-11-22:
 
 - Computing risk from the diff with a model or a score. A class is declared and matched; it is
   never inferred.
-- Judging whether a model's verdict is right. Garita checks that it exists, what gave it and what
+- Judging whether a model's verdict is right. garita checks that it exists, what gave it and what
   it pins.
 - Model-judged blocking outside a declared risk class.
 
 ## References
 
 - RFC-1: the checks, triggers, budgets, receipts and the `gate:` locator this builds on.
-- RFC-2: adapters and native tools, whose `describe` states a tool's system.
+- RFC-2: adapters and native tools, whose `identity` part and native `describe` state a tool's system.
 - urzua RFC-27: the boundary that puts risk scoring outside urzua.
 - urzua ADR-101: the principles inherited, including the content-scope ceiling: a check verifies presence and shape, never meaning.

@@ -40,13 +40,15 @@ An adapter has four parts:
 
 | Part | What it does |
 |---|---|
-| `describe` | The tool's name, its system (RFC-3), the kind of check it is, the scopes it accepts and the metrics it reports |
+| `identity` | The tool's name, its system (RFC-3), the kind of check it is, the scopes it accepts and the metrics it reports |
 | `invoke` | Turns a trigger's scope into the tool's arguments and working directory |
 | `parse` | Turns the tool's output into findings, reports what it examined, and classifies the run |
 | `metrics` | The numbers a budget can limit (RFC-1 §4): duration, files examined, tests run |
 
-A built-in adapter is code in garita. A plugin adapter is a subprocess that speaks RFC-1 §6's
-protocol, with `--describe` returning the `describe` part.
+A built-in adapter is code in garita. A plugin adapter is a subprocess that speaks the plugin
+protocol, which is part of garita's extended contract (RFC-1 §5, §6), with `--describe` returning
+the `identity` part. The `identity` part is garita's internal interface. It is not the `describe`
+command of agent-cli-kit RFC-1 §3, which a native tool prints (§6).
 
 ### 2. Invoke
 
@@ -85,8 +87,8 @@ checks:
 `parse` returns three things:
 
 - **Findings.** Each has `rule`, `severity`, `file`, `line`, `column`, `message`, the tool's own
-  `fix` command when it has one, and a `fingerprint` that is stable across runs. These are the fields
-  the contract's gate profile names, and the ones SARIF and code-quality reports need.
+  `fix` command when it has one, and a `fingerprint` that is stable across runs. The fields of a
+  finding are agent-cli-kit RFC-1 §2's; how the fingerprint is computed is garita's own (RFC-1 §5).
 - **What was examined.** A count per unit (`files`, `tests`, `packages`), taken from the tool's own
   output where it reports one. This is how a run over nothing is told apart from a pass.
 - **The kind of run.** One of: clean, findings, ran on nothing, or crashed. The adapter decides this
@@ -152,26 +154,26 @@ adapter classifies each task separately, and a finding with no file names its ta
 
 ### 6. Native tools
 
-A tool is **native** when it meets the agent CLI contract (agent-cli-kit RFC-1): one JSON object on
-stdout, exit codes 0, 1 and 2, a `status`, `blocking`, typed `findings`, an `examined` count, a
-`next_action`, and a `describe` command.
+A tool is **native** when it meets the agent CLI contract, which agent-cli-kit owns (RFC-1, and RFC-3
+for a tool that runs other checks), and has a `describe` command (RFC-1 §3). garita reads its report
+and its `describe` as those records define them.
 
-- A native check is declared with `native: <tool>` in place of `run` and `parser`. Garita passes it
+- A native check is declared with `native: <tool>` in place of `run` and `parser`. garita passes it
   the scope and reads its report unchanged.
-- **Version check.** Garita reads the tool's `describe` once per run and compares the major of its
+- **Version check.** garita reads the tool's `describe` once per run and compares the major of its
   `contract_version` with its own. A different major makes the check `not-run`, with a finding that
-  names both versions. Garita never guesses at a report it does not understand. Unknown keys from a
+  names both versions. garita never guesses at a report it does not understand. Unknown keys from a
   newer minor are ignored.
-- **A native tool that exits 2 could not run.** The check is `not-run`, the same as a tool that
+- **A native tool that exits 2 could not run** (agent-cli-kit RFC-1 §1). The check is `not-run`, the same as a tool that
   cannot be started, and so is the garita run (RFC-1 §5). It is not a crash.
-- **urzua is the first native tool.** The contract is written from its report: the exit codes,
-  `status`, `blocking`, `findings`, and `next_action` with its reason and inputs, each input an
-  object naming the placeholder, its flag and what to put there. What urzua lacks is the `describe`
-  command and the `examined` object, which it adds beside its existing `files_examined` in a minor
-  release. Nothing in its output changes or is removed.
+- **urzua is the first native tool.** The contract is written from its report. What urzua lacks is
+  the `describe` command and the `examined` object, which it adds beside its existing
+  `files_examined` in a minor release (agent-cli-kit RFC-1 §7). Nothing in its output changes or is
+  removed.
 
-Garita is itself a native tool: its own output meets the contract, so one garita can run another, and
-urzua or decision-agent-kit can read a garita report without an adapter.
+garita is itself a native tool: its own output meets the contract, so one garita can run another, and
+urzua or decision-agent-kit can read a garita report without an adapter. Its own `describe` is
+declared in RFC-1 §5.
 
 ## Phases
 
@@ -206,7 +208,7 @@ Decided by the maintainer on 2026-11-22 and 2026-11-23:
 
 ## References
 
-- RFC-1: the checks, scopes, budgets and the plugin protocol this builds on.
+- RFC-1: the checks, scopes, budgets and the plugin protocol (its extended contract) this builds on.
 - RFC-3: the systems a tool belongs to.
-- agent-cli-kit RFC-1: the contract a native tool meets.
+- agent-cli-kit RFC-1 and RFC-3: the contract a native tool meets.
 - urzua RFC-3: the output contract the shared one starts from.

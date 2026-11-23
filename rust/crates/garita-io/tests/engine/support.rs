@@ -235,6 +235,15 @@ pub fn assert_contract(report: &Report) {
             "a not-run report says why: {report:#?}"
         );
     }
+    for f in &report.findings {
+        if let Some(check) = &f.check {
+            assert!(
+                report.checks.iter().any(|c| &c.name == check),
+                "finding {} names check {check}, which is not in checks: {report:#?}",
+                f.rule
+            );
+        }
+    }
     let json = engine::to_json(report);
     assert!(!json.contains('\n'));
     let back: Report = serde_json::from_str(&json).unwrap();
@@ -253,7 +262,16 @@ pub fn rules<'a>(report: &'a Report, check: &str) -> Vec<&'a str> {
     report
         .findings
         .iter()
-        .filter(|f| f.check == check)
+        .filter(|f| f.check.as_deref() == Some(check))
+        .map(|f| f.rule.as_str())
+        .collect()
+}
+
+pub fn run_rules(report: &Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.check.is_none())
         .map(|f| f.rule.as_str())
         .collect()
 }

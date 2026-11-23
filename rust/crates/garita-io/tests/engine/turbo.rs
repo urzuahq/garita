@@ -90,7 +90,7 @@ fn a_missing_turbo_summary_is_an_unrecognized_output_error() {
     let out = repo.run_at(Trigger::Push);
     let f = finding(&out.report, "turbo/unrecognized-output");
     assert_eq!(f.severity, Severity::Error);
-    assert_eq!(f.check, "types");
+    assert_eq!(f.check.as_deref(), Some("types"));
     assert_eq!(out.exit_code(), 1);
 }
 
@@ -339,7 +339,7 @@ fn two_turbo_checks_in_one_directory_each_read_only_their_own_summary() {
                 .report
                 .findings
                 .iter()
-                .filter(|f| f.check == name && f.severity == Severity::Error)
+                .filter(|f| f.check.as_deref() == Some(name) && f.severity == Severity::Error)
                 .map(|f| f.message.as_str())
                 .collect();
             assert_eq!(messages.len(), 1, "{messages:#?}");

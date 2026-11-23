@@ -8,15 +8,12 @@ mod record;
 pub(crate) mod scope;
 mod select;
 pub(crate) mod session;
-mod summary;
 mod turbo;
 
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 use garita_core::report::{Report, RunContext, Trigger};
-
-pub use summary::{error_lines, summary};
 
 /// The time source for a run's start and finish.
 pub trait Clock: Send + Sync {
@@ -60,11 +57,10 @@ impl Request {
     }
 }
 
-/// The report to print, and the lines for stderr that are not part of it.
+/// The report to print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub report: Report,
-    pub notes: Vec<String>,
 }
 
 impl Outcome {
@@ -76,7 +72,6 @@ impl Outcome {
         };
         Self {
             report: Report::not_run(context, error),
-            notes: Vec::new(),
         }
     }
 

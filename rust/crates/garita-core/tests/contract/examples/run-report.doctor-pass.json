@@ -1,0 +1,29 @@
+{
+  "blocking": false,
+  "checks": [],
+  "commit": null,
+  "examined": {
+    "checks": 1,
+    "hooks": 2
+  },
+  "findings": [
+    {
+      "column": null,
+      "file": null,
+      "fingerprint": "0123456789abcdef",
+      "line": null,
+      "message": "the `push` trigger's scope has no base: no base ref was found; tried origin/HEAD, origin/main, origin/master, main, master; main passed over because it is the checked-out branch or HEAD's own commit; pass --base",
+      "rule": "doctor/base-unresolved",
+      "severity": "info"
+    }
+  ],
+  "next_action": null,
+  "next_action_inputs": [],
+  "next_action_reason": null,
+  "receipt": null,
+  "schema_version": 1,
+  "scope": null,
+  "status": "pass",
+  "tree": null,
+  "trigger": null
+}

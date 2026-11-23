@@ -23,6 +23,8 @@ enum Command {
     Run(RunArgs),
     /// Check the local setup
     Doctor,
+    /// Print the commands this tool offers, as JSON
+    Describe,
     /// Manage git hooks
     Hooks {
         #[command(subcommand)]
@@ -89,6 +91,7 @@ fn main() -> ExitCode {
     let dir = current_dir();
     let verdict = match cli.command {
         Command::Run(args) => return run(args),
+        Command::Describe => return describe(),
         Command::Doctor => doctor::doctor(&doctor::Request {
             dir,
             version: VERSION.to_string(),
@@ -101,7 +104,19 @@ fn main() -> ExitCode {
             action: HooksAction::Uninstall,
         } => hooks::uninstall(&dir),
     };
-    emit(&verdict.report, &[], &verdict.summary)
+    emit(&verdict.report)
+}
+
+fn describe() -> ExitCode {
+    let json = garita_core::describe::describe(VERSION).to_json();
+    if writeln!(std::io::stdout().lock(), "{json}").is_err() {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "garita: could not write describe to stdout"
+        );
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
 }
 
 fn current_dir() -> PathBuf {
@@ -112,7 +127,10 @@ fn current_dir() -> PathBuf {
 /// JSON verdict.
 fn usage_error(e: &clap::Error) -> ExitCode {
     let subcommand = std::env::args().nth(1);
-    let wants_report = matches!(subcommand.as_deref(), Some("run" | "doctor" | "hooks"));
+    let wants_report = matches!(
+        subcommand.as_deref(),
+        Some("run" | "doctor" | "hooks" | "describe")
+    );
     if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) || !wants_report {
         let _ = e.print();
         return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
@@ -121,7 +139,7 @@ fn usage_error(e: &clap::Error) -> ExitCode {
     let text = rendered.trim();
     let text = text.strip_prefix("error: ").unwrap_or(text);
     let report = Report::not_run(RunContext::default(), text.to_string());
-    emit(&report, &[], &engine::summary(&report))
+    emit(&report)
 }
 
 fn run(args: RunArgs) -> ExitCode {
@@ -142,32 +160,26 @@ fn run(args: RunArgs) -> ExitCode {
     };
     let outcome = std::panic::catch_unwind(|| engine::run(&request, &SystemClock));
     match outcome {
-        Ok(outcome) => emit(
-            &outcome.report,
-            &outcome.notes,
-            &engine::summary(&outcome.report),
-        ),
+        Ok(outcome) => emit(&outcome.report),
         Err(_) => {
             let context = RunContext {
                 trigger: Some(trigger),
                 ..RunContext::default()
             };
             let report = Report::not_run(context, "garita stopped on an internal error".into());
-            emit(&report, &[], &engine::summary(&report))
+            emit(&report)
         }
     }
 }
 
-fn emit(report: &Report, notes: &[String], summary: &str) -> ExitCode {
+fn emit(report: &Report) -> ExitCode {
     let mut stdout = std::io::stdout().lock();
     let printed = writeln!(stdout, "{}", engine::to_json(report)).and_then(|()| stdout.flush());
-    let mut stderr = std::io::stderr().lock();
-    for note in notes {
-        let _ = writeln!(stderr, "{note}");
-    }
-    let _ = writeln!(stderr, "{summary}");
     if printed.is_err() {
-        let _ = writeln!(stderr, "garita: could not write the report to stdout");
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "garita: could not write the report to stdout"
+        );
         return ExitCode::from(2);
     }
     ExitCode::from(report.exit_code())

@@ -1,6 +1,6 @@
 use garita_core::report::{CheckStatus, RunStatus, Severity, Trigger};
 
-use crate::support::{Repo, check, finding, rules};
+use crate::support::{Repo, check, finding, rules, run_rules};
 
 const LINT_FILE: &str = "packages/app/src/lint-error.ts";
 
@@ -34,7 +34,11 @@ fn a_failing_lint_yields_findings_with_file_line_rule_and_message() {
     assert_eq!(r.status, RunStatus::Fail);
     assert_eq!(out.exit_code(), 1);
     assert!(r.blocking);
-    let f = r.findings.iter().find(|f| f.check == "lint").unwrap();
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.check.as_deref() == Some("lint"))
+        .unwrap();
     assert_eq!(f.severity, Severity::Error);
     assert_eq!(f.file.as_deref(), Some(LINT_FILE));
     assert_eq!(f.line.map(|l| l.get()), Some(2));
@@ -376,10 +380,7 @@ fn a_run_where_no_check_applies_to_the_trigger_warns_with_no_checks() {
         repo.config(&format!("schema_version: 1\n{checks}"));
         let out = repo.run();
         let f = finding(&out.report, "no-checks");
-        assert_eq!(
-            (f.check.as_str(), f.severity),
-            ("garita", Severity::Warning)
-        );
+        assert_eq!((f.check.as_deref(), f.severity), (None, Severity::Warning));
         assert!(f.message.contains("`commit` trigger"), "{}", f.message);
         assert_eq!((out.report.status, out.exit_code()), (RunStatus::Warn, 0));
     }
@@ -392,10 +393,8 @@ fn selected_but_skipped_or_named_checks_get_no_no_checks_finding() {
     repo.config(&format!(
         "schema_version: 1\nchecks:\n  lint:\n    run: {tool} {{files}}\n    on: [ci]\n"
     ));
-    assert!(!rules(&repo.run_at(Trigger::Ci).report, "garita").contains(&"no-checks"));
-    assert!(
-        !rules(&repo.run_named(Trigger::Commit, &["lint"]).report, "garita").contains(&"no-checks")
-    );
+    assert!(!run_rules(&repo.run_at(Trigger::Ci).report).contains(&"no-checks"));
+    assert!(!run_rules(&repo.run_named(Trigger::Commit, &["lint"]).report).contains(&"no-checks"));
 }
 
 #[test]
@@ -574,8 +573,6 @@ fn min_severity_drops_and_counts_tool_findings_below_it() {
     assert_eq!(entry.suppressed.get(&Severity::Warning), Some(&2));
     let json = garita_io::engine::to_json(&out.report);
     assert!(json.contains("\"suppressed\":{\"warning\":2}"), "{json}");
-    let text = garita_io::engine::summary(&out.report);
-    assert!(text.contains("[2 warnings suppressed]"), "{text}");
 
     let out = floor_repo(Some("warning"), false).run();
     assert_eq!(rules(&out.report, "lint").len(), 2);

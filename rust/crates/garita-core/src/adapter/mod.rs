@@ -93,9 +93,18 @@ impl ToolFinding {
     }
 
     pub fn into_finding(self, check: &str) -> Finding {
+        self.build(Some(check.to_string()))
+    }
+
+    /// A finding about the run itself, which no check produced.
+    pub fn into_run_finding(self) -> Finding {
+        self.build(None)
+    }
+
+    fn build(self, check: Option<String>) -> Finding {
         let fingerprint = Some(self.fingerprint());
         Finding {
-            check: check.to_string(),
+            check,
             severity: self.severity,
             rule: self.rule,
             file: self.file,

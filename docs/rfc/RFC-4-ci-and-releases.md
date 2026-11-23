@@ -20,7 +20,7 @@ hook fails when garita is not on the machine (RFC-1 §7). So every machine and e
 commits to a gated repository needs the same garita, installed the same way. A binary someone built
 by hand on one machine does not give that.
 
-**A platform that is only built has not been tested.** Garita stops a timed-out tool's whole process
+**A platform that is only built has not been tested.** garita stops a timed-out tool's whole process
 group by running the system `kill`, because the workspace forbids `unsafe`, and it reads the machine
 name differently on each platform. Until this RFC neither had run anywhere but Linux, while the
 gate is meant to run on developers' Macs.

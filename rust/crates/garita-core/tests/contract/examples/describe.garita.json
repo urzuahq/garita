@@ -1,0 +1,41 @@
+{
+  "commands": [
+    {
+      "metrics": [
+        "duration_ms",
+        "files"
+      ],
+      "name": "run",
+      "profile": "run",
+      "safe": false,
+      "scopes": [
+        "base-ref"
+      ]
+    },
+    {
+      "metrics": [],
+      "name": "doctor",
+      "profile": "run",
+      "safe": true,
+      "scopes": []
+    },
+    {
+      "metrics": [],
+      "name": "hooks install",
+      "profile": "run",
+      "safe": false,
+      "scopes": []
+    },
+    {
+      "metrics": [],
+      "name": "hooks uninstall",
+      "profile": "run",
+      "safe": false,
+      "scopes": []
+    }
+  ],
+  "contract_version": "1.1",
+  "name": "garita",
+  "system": 0,
+  "version": "0.0.0"
+}

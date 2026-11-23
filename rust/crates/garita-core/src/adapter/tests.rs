@@ -73,7 +73,7 @@ fn fingerprint_ignores_position() {
     };
     assert_eq!(finding(1).fingerprint(), finding(90).fingerprint());
     let full = finding(1).into_finding("types");
-    assert_eq!(full.check, "types");
+    assert_eq!(full.check.as_deref(), Some("types"));
     assert_eq!(full.fingerprint, Some(finding(2).fingerprint()));
 }
 

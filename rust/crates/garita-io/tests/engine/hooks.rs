@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use garita_core::report::{Report, RunStatus, Severity, Trigger};
 use garita_io::hooks::{self, HOOKS, Kind};
 
-use crate::support::{Repo, assert_contract, finding, git_in, rules};
+use crate::support::{Repo, assert_contract, finding, git_in, run_rules};
 
 const CONFIG: &str = "schema_version: 1\nchecks: {}\n";
 
@@ -48,10 +48,7 @@ fn hooks_install_into_dot_git_hooks_and_pass() {
     let repo = configured();
     let report = install(&repo.root(), false);
     assert_eq!(report.status, RunStatus::Pass);
-    assert_eq!(
-        rules(&report, "garita"),
-        ["hook-installed", "hook-installed"]
-    );
+    assert_eq!(run_rules(&report), ["hook-installed", "hook-installed"]);
     assert_eq!(report.examined.get("hooks"), Some(&2));
     assert_installed(&repo.root().join(".git/hooks"));
 }
@@ -124,10 +121,7 @@ fn installing_twice_is_unchanged() {
     let repo = configured();
     install(&repo.root(), false);
     let report = install(&repo.root(), false);
-    assert_eq!(
-        rules(&report, "garita"),
-        ["hook-unchanged", "hook-unchanged"]
-    );
+    assert_eq!(run_rules(&report), ["hook-unchanged", "hook-unchanged"]);
     assert_installed(&repo.root().join(".git/hooks"));
 }
 
@@ -191,7 +185,7 @@ fn garitas_hook_with_a_line_appended_is_foreign_to_install_and_uninstall() {
     );
     assert_eq!(fs::read_to_string(&path).unwrap(), edited);
     let report = uninstall(&repo.root());
-    assert_eq!(rules(&report, "garita"), ["hook-removed", "hook-foreign"]);
+    assert_eq!(run_rules(&report), ["hook-removed", "hook-foreign"]);
     assert_eq!(fs::read_to_string(&path).unwrap(), edited);
 }
 
@@ -244,7 +238,7 @@ fn a_refused_default_hooks_dir_does_not_blame_core_hooks_path() {
 }
 
 fn has_rule(report: &Report, rule: &str) -> bool {
-    rules(report, "garita").contains(&rule)
+    run_rules(report).contains(&rule)
 }
 
 #[test]
@@ -268,10 +262,7 @@ fn a_foreign_hook_is_refused_with_nothing_written_then_replaced_with_replace() {
     assert_eq!(fs::read_to_string(dir.join("pre-push")).unwrap(), foreign);
     let report = install(&repo.root(), true);
     assert_eq!(report.exit_code(), 0);
-    assert_eq!(
-        rules(&report, "garita"),
-        ["hook-installed", "hook-replaced"]
-    );
+    assert_eq!(run_rules(&report), ["hook-installed", "hook-replaced"]);
     assert_installed(&dir);
 }
 
@@ -324,7 +315,7 @@ fn uninstall_removes_garitas_hooks_and_leaves_a_foreign_one() {
     fs::write(dir.join("pre-push"), "#!/bin/sh\nnpm test\n").unwrap();
     let report = uninstall(&repo.root());
     assert_eq!(report.status, RunStatus::Pass);
-    assert_eq!(rules(&report, "garita"), ["hook-removed", "hook-foreign"]);
+    assert_eq!(run_rules(&report), ["hook-removed", "hook-foreign"]);
     assert!(!dir.join("pre-commit").exists());
     assert_eq!(
         fs::read_to_string(dir.join("pre-push")).unwrap(),

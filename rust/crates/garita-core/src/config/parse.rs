@@ -42,7 +42,6 @@ const CHECK_KEYS: &[&str] = &[
     "min_severity",
 ];
 const BUILTIN_FORBIDS: &[&str] = &["parser", "globs", "partition", "via", "exclude", "cwd"];
-pub(super) const RESERVED_CHECK: &str = "garita";
 pub(super) const VIA_TURBO: &str = "turbo";
 const MIN_SEVERITY: &[(&str, Severity)] = &[
     ("error", Severity::Error),
@@ -462,10 +461,6 @@ impl Walker {
         let mut checks = Vec::new();
         for (key, v) in map {
             match key.as_str() {
-                Some(RESERVED_CHECK) => self.invalid(
-                    &join("checks", RESERVED_CHECK),
-                    "the name `garita` is reserved for findings about the run itself; rename the check",
-                ),
                 Some(name) if is_check_name(name) => checks.extend(self.check(name, v)),
                 Some(name) => self.invalid(
                     &join("checks", name),
