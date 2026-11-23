@@ -356,9 +356,7 @@ real parsers, so a finding carries file, line, rule and message:
 | Merge | `garita merge <PR>`: merges the PR into the target branch in a throwaway worktree, runs the `merge` trigger there, acts on `pass` as `merge.mode` says, then removes the worktree | Gates the merged result, not the branch, and works when CI is unavailable |
 
 An installed git hook exits non-zero, with a message, when `garita` is not on the machine or is older
-than the config's `requires`. A machine without garita must not read as a pass. `garita run` always
-prints its verdict on stdout; the hook hides it when its own output is a terminal, where a person
-needs only the summary, and leaves it for an agent, a pipe or CI to read.
+than the config's `requires`. A machine without garita must not read as a pass.
 
 `garita doctor` says whether the gate will run here: a missing, foreign or outdated hook, a tool a
 check names that is not on the machine, receipts that git does not ignore, `garita` itself missing

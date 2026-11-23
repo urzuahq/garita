@@ -534,24 +534,3 @@ fn a_defect_in_a_check_that_runs_only_in_ci_is_a_warning() {
         Severity::Warning
     );
 }
-
-#[test]
-fn format_one_hooks_are_outdated_with_a_warning_to_reinstall() {
-    let repo = healthy();
-    for name in ["pre-commit", "pre-push"] {
-        let trigger = if name == "pre-commit" {
-            "commit"
-        } else {
-            "push"
-        };
-        let text = format!(
-            "#!/bin/sh\n# garita hook format 1: written by `garita hooks install`, which rewrites this file\nif ! command -v garita >/dev/null 2>&1; then\n  echo \"garita: the {name} hook needs garita, which is not on PATH; this {trigger} is blocked\" >&2\n  exit 2\nfi\nexec garita run --trigger {trigger}\n"
-        );
-        fs::write(hook(&repo, name), text).unwrap();
-    }
-    let report = doctor(&repo);
-    let f = finding(&report, "doctor/hook-outdated");
-    assert_eq!(f.severity, Severity::Warning);
-    assert_eq!(report.next_action.as_deref(), Some("garita hooks install"));
-    assert!(!has(&report, "doctor/hook-modified"));
-}
