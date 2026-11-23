@@ -9,7 +9,7 @@ set -uo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 action=".github/actions/install-knope/action.yml"
-users=(.github/workflows/checks.yml)
+users=(.github/workflows/checks.yml .github/workflows/prepare-release.yml .github/workflows/publish-release.yml)
 
 # Prints one line per problem found under $1 and returns 1 when there is one.
 verify() {

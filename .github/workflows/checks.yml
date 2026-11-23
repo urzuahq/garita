@@ -70,6 +70,9 @@ jobs:
       - name: release invariants planted-violation cases
         working-directory: .
         run: .github/scripts/release-invariants.test.sh
+      - name: the release guard tolerates only a true no-release (planted-violation cases)
+        working-directory: .
+        run: .github/scripts/release-guard.test.sh
       - name: the aggregate gate fails closed (planted-violation cases)
         working-directory: .
         run: .github/scripts/ci-gate.test.sh
