@@ -147,6 +147,27 @@ impl Parsed {
         }
     }
 
+    /// A tool that exited non-zero blocks even when every finding it printed is below `error`,
+    /// as a linter told to deny warnings does. Only "ran on nothing" and a crash are left alone.
+    fn blocking_on_failure(mut self, tool: &str, exit: Option<i32>) -> Self {
+        let failed = exit.filter(|code| *code != 0);
+        let judged = matches!(self.outcome, Outcome::Clean | Outcome::Findings);
+        let has_error = self.findings.iter().any(|f| f.severity == Severity::Error);
+        if let (Some(code), true, false) = (failed, judged, has_error) {
+            self.outcome = Outcome::Findings;
+            self.findings.push(ToolFinding {
+                severity: Severity::Error,
+                rule: format!("{tool}/failed"),
+                file: None,
+                line: None,
+                column: None,
+                message: format!("{tool} exited with code {code} without reporting an error"),
+                fix: None,
+            });
+        }
+        self
+    }
+
     /// `Findings` when there are any, else `Nothing` for zero files, else `Clean`.
     fn from_findings(findings: Vec<ToolFinding>, files: Option<u64>) -> Self {
         let outcome = if !findings.is_empty() {
@@ -286,12 +307,13 @@ impl Adapter {
             stderr: &stderr,
             exit_code: output.exit_code,
         };
-        match self {
+        let parsed = match self {
             Adapter::Oxlint => oxlint::parse(output, context),
             Adapter::Oxfmt => oxfmt::parse(output, context),
             Adapter::Tsc => tsc::parse(output, context),
             Adapter::ExitCode => exit_code::parse(output, context),
-        }
+        };
+        parsed.blocking_on_failure(self.name(), output.exit_code)
     }
 }
 

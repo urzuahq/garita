@@ -73,8 +73,9 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
   native tool that reports it could not run (RFC-2): `not-run`, exit 2.
   A tool that was killed or timed out gave no verdict of its own: that is a `crash` finding at
   `warning`, never a silent pass, and `on_crash: fail` makes it block. A tool that exited non-zero
-  did give a verdict, so it always blocks, even when garita cannot read what it said: a non-zero
-  exit never becomes a pass.
+  did give a verdict, so it blocks, even when garita cannot read what it said and even when every
+  finding it printed is a warning: a non-zero exit never becomes a pass. The one exception is a
+  tool saying it had no files to check, which is reported as a run over nothing.
 - **A missing config is not a pass.** With no `.garita/config.yaml`, `garita run` is `not-run`, exit
   2, and its `error` names the missing file. An unparseable config, a config that fails its schema
   and an unknown key are the same.

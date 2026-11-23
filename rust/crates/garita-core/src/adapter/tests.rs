@@ -569,3 +569,79 @@ fn turbo_summary_errors() {
     assert!(!summary.tasks[0].ran_fresh());
     assert_eq!(summary.exit_code, None);
 }
+
+#[test]
+fn a_nonzero_exit_with_only_warnings_still_blocks() {
+    let stdout = r#"{"diagnostics":[{"message":"m","code":"eslint(no-console)","severity":"warning","filename":"a.ts","labels":[]}],"number_of_files":3}"#;
+    let parsed = Adapter::Oxlint.parse(
+        &ToolOutput {
+            stdout,
+            stderr: "",
+            exit_code: Some(1),
+        },
+        &ParseContext::default(),
+    );
+    assert_eq!(parsed.outcome, Outcome::Findings);
+    assert_eq!(parsed.findings.len(), 2);
+    let last = parsed
+        .findings
+        .last()
+        .map(|f| (f.rule.as_str(), f.severity));
+    assert_eq!(last, Some(("oxlint/failed", Severity::Error)));
+
+    let same_at_zero = Adapter::Oxlint.parse(
+        &ToolOutput {
+            stdout,
+            stderr: "",
+            exit_code: Some(0),
+        },
+        &ParseContext::default(),
+    );
+    assert_eq!(same_at_zero.findings.len(), 1);
+}
+
+#[test]
+fn a_nonzero_exit_with_only_tsc_messages_still_blocks() {
+    let parsed = Adapter::Tsc.parse(
+        &ToolOutput {
+            stdout: "a.ts(1,1): message TS6194: x\n",
+            stderr: "",
+            exit_code: Some(1),
+        },
+        &ParseContext::default(),
+    );
+    assert!(parsed.findings.iter().any(|f| f.rule == "tsc/failed"));
+    assert!(
+        parsed
+            .findings
+            .iter()
+            .any(|f| f.severity == Severity::Error)
+    );
+}
+
+#[test]
+fn every_parser_blocks_or_reports_nothing_on_any_nonzero_exit() {
+    let outputs = ["", " \n", "garbage", "{}", "[]", "Checking formatting...\n"];
+    for adapter in Adapter::ALL {
+        for stdout in outputs {
+            let parsed = adapter.parse(
+                &ToolOutput {
+                    stdout,
+                    stderr: "",
+                    exit_code: Some(3),
+                },
+                &ParseContext::default(),
+            );
+            let blocks = parsed
+                .findings
+                .iter()
+                .any(|f| f.severity == Severity::Error);
+            assert!(
+                blocks || parsed.outcome == Outcome::Nothing,
+                "{} on {stdout:?}: {:?}",
+                adapter.name(),
+                parsed.outcome
+            );
+        }
+    }
+}
