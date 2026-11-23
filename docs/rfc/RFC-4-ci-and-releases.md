@@ -47,8 +47,14 @@ report, as a failure, and could be the last word on a commit whose other run is 
 then refuses a merge that should be allowed. A gate job cannot abstain: any conclusion it gives for
 a superseded run is either a false block or a pass before the real answer. So runs are not
 cancelled on the same commit. Only a new commit cancels a run in progress, and that failure lands
-on the old commit. Any other event waits behind the run in progress, which makes the run for the
-latest event the last to report. Editing a pull request's title or description starts no run.
+on the old commit. Any other pull request event waits behind the run in progress, and a later one takes
+its place in the queue, which makes the run for the latest event the last to report. A run that is
+replaced while it waits never starts, so it reports nothing. Editing a pull request's title or
+description starts no run.
+
+The workflow cannot be started by hand. A run started by hand on a pull request's branch is not a
+pull request run: it skips the changeset check, runs beside the real one, and could leave a green
+`ci` on a commit whose pull request run failed. A failed run is re-run from its own page.
 
 The checks themselves live in a reusable workflow, `checks.yml`, so that publishing a release can
 run exactly the same checks on the commit it ships (section 4): format, lint, unused dependencies
