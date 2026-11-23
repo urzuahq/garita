@@ -1,8 +1,5 @@
 # Install
 
-There is no release yet. Until the first one is published, the install script fails and the only way
-to run garita is to [build it from source](#build-from-source).
-
 ## Install a release
 
 Releases are published at <https://github.com/urzuahq/garita/releases> for two targets:

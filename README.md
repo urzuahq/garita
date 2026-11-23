@@ -13,7 +13,9 @@ decision-model checks garita can run, such as whether an agent's turn is really 
 
 ## Status
 
-In development: the RFCs are in draft and there is no release yet.
+In development: the RFCs are in draft. Releases are on the
+[releases page](https://github.com/urzuahq/garita/releases), for Linux x86_64 and macOS on Apple
+Silicon.
 
 - `garita run` works: it reads `.garita/config.yaml`, resolves the scope from git, runs the checks
   with no shell, applies budgets, writes a receipt and prints one JSON verdict. It exits 0 when
@@ -24,13 +26,15 @@ In development: the RFCs are in draft and there is no release yet.
   and does not overwrite a hook it did not write unless you pass `--replace`. `garita doctor` says whether the gate will run on
   this machine.
 
-To try it, build from source with Rust 1.87 or later:
+To install the latest release, with its build provenance checked by `gh`:
 
 ```sh
-cd rust && cargo build --release
+tag=$(gh release view --repo urzuahq/garita --json tagName --jq .tagName)
+curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" | sh -s -- --version "$tag"
 ```
 
-The [install page](docs/reference/install.md) covers the install script, which works once a release exists.
+[`docs/reference/install.md`](docs/reference/install.md) has the other ways to install, what the
+script verifies, and how to build from source.
 
 ## Design
 
