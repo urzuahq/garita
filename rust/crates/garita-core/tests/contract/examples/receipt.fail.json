@@ -1,0 +1,141 @@
+{
+  "checks": [
+    {
+      "command": "lint src/app.ts src/util.ts",
+      "duration_ms": 412,
+      "examined": {
+        "files": 38
+      },
+      "exit_code": 1,
+      "finished_at": "2026-11-21T03:15:04Z",
+      "kind": "lint",
+      "name": "lint",
+      "output": "src/app.ts:1302:5 error\nsrc/util.ts:7:5 error\n2 errors",
+      "output_tail": "2 errors",
+      "scope": {
+        "files": [
+          "src/app.ts",
+          "src/util.ts"
+        ],
+        "kind": "affected",
+        "packages": [
+          "frontend"
+        ]
+      },
+      "started_at": "2026-11-21T03:15:02Z",
+      "status": "fail",
+      "tool_version": "1.2.3"
+    },
+    {
+      "command": "types src/app.ts src/util.ts",
+      "duration_ms": 412,
+      "examined": {
+        "files": 38
+      },
+      "exit_code": 0,
+      "finished_at": "2026-11-21T03:15:04Z",
+      "kind": "types",
+      "name": "types",
+      "output": "src/app.ts:1302:5 error\nsrc/util.ts:7:5 error\n2 errors",
+      "output_tail": "2 errors",
+      "scope": {
+        "files": [
+          "src/app.ts",
+          "src/util.ts"
+        ],
+        "kind": "affected",
+        "packages": [
+          "frontend"
+        ]
+      },
+      "started_at": "2026-11-21T03:15:02Z",
+      "status": "pass",
+      "tool_version": "1.2.3"
+    }
+  ],
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "config_hash": "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "dirty": false,
+  "finished_at": "2026-11-21T03:15:04Z",
+  "machine": "build-host",
+  "receipt_version": 1,
+  "report": {
+    "blocking": true,
+    "checks": [
+      {
+        "duration_ms": 412,
+        "examined": {
+          "files": 38
+        },
+        "kind": "lint",
+        "name": "lint",
+        "rerun": "garita run lint",
+        "status": "fail"
+      },
+      {
+        "duration_ms": 412,
+        "examined": {
+          "files": 38
+        },
+        "kind": "types",
+        "name": "types",
+        "rerun": "garita run types",
+        "status": "pass"
+      }
+    ],
+    "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+    "examined": {
+      "files": 76
+    },
+    "findings": [
+      {
+        "check": "lint",
+        "column": 5,
+        "file": "src/app.ts",
+        "fingerprint": "5d1c0e9a",
+        "line": 1302,
+        "message": "Unexpected `debugger` statement",
+        "rule": "lint/rule",
+        "severity": "error"
+      },
+      {
+        "check": "lint",
+        "column": 5,
+        "file": "src/util.ts",
+        "fingerprint": "5d1c0e9a",
+        "line": 7,
+        "message": "Unexpected `debugger` statement",
+        "rule": "lint/rule",
+        "severity": "error"
+      }
+    ],
+    "next_action": "garita run lint --files src/app.ts src/util.ts",
+    "next_action_inputs": [],
+    "next_action_reason": "2 errors in 1 check",
+    "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",
+    "schema_version": 1,
+    "scope": {
+      "files": [
+        "src/app.ts",
+        "src/util.ts"
+      ],
+      "kind": "affected",
+      "packages": [
+        "frontend"
+      ]
+    },
+    "status": "fail",
+    "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+    "trigger": "push"
+  },
+  "result": "FAILED",
+  "run_id": "01M7XM3Q4T8Z6R2K9V5B1N0HCW",
+  "started_at": "2026-11-21T03:15:02Z",
+  "tool": {
+    "name": "garita",
+    "version": "0.1.0"
+  },
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+  "trigger": "push",
+  "worktree": "4e7a1c9b2d5f8036a1b4c7e0d3f6a9c2b5e8d1f4"
+}

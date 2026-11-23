@@ -1,0 +1,36 @@
+{
+  "checks": [],
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "config_hash": "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "dirty": false,
+  "finished_at": "2026-11-21T03:15:04Z",
+  "machine": "build-host",
+  "receipt_version": 1,
+  "report": {
+    "blocking": false,
+    "checks": [],
+    "commit": null,
+    "error": "not a git repository",
+    "examined": {},
+    "findings": [],
+    "next_action": "garita doctor",
+    "next_action_inputs": [],
+    "next_action_reason": "the run could not start",
+    "receipt": null,
+    "schema_version": 1,
+    "scope": null,
+    "status": "not-run",
+    "tree": null,
+    "trigger": "commit"
+  },
+  "result": "FAILED",
+  "run_id": "01M7XM3Q4T8Z6R2K9V5B1N0HCW",
+  "started_at": "2026-11-21T03:15:02Z",
+  "tool": {
+    "name": "garita",
+    "version": "0.1.0"
+  },
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+  "trigger": "push",
+  "worktree": "4e7a1c9b2d5f8036a1b4c7e0d3f6a9c2b5e8d1f4"
+}

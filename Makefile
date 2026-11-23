@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 RUST_DIR := rust
 
-.PHONY: build test fmt fmt-check lint deny ci
+.PHONY: build test fmt fmt-check lint deny contract ci
 
 build:
 	cd $(RUST_DIR) && cargo build --workspace --release --locked
@@ -23,4 +23,7 @@ lint:
 deny:
 	cd $(RUST_DIR) && cargo machete && cargo deny check
 
-ci: fmt-check lint deny build test
+contract:
+	scripts/contract-check.sh
+
+ci: fmt-check lint deny build test contract
