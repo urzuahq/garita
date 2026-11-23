@@ -1,7 +1,8 @@
 use serde::Deserialize;
 
 use super::{
-    ParseContext, Parsed, ToolFinding, ToolOutput, clip, examined_files, nonzero, path_arg, rebase,
+    ParseContext, Parsed, ToolFinding, ToolOutput, examined_files, nonzero, oxlint_text, path_arg,
+    rebase,
 };
 use crate::report::Severity;
 
@@ -14,31 +15,32 @@ struct Report {
 }
 
 #[derive(Deserialize)]
-struct Diagnostic {
-    message: String,
+pub(super) struct Diagnostic {
+    pub(super) message: String,
     #[serde(default)]
-    code: Option<String>,
-    severity: String,
+    pub(super) code: Option<String>,
+    pub(super) severity: String,
     #[serde(default)]
-    help: Option<String>,
+    pub(super) help: Option<String>,
     #[serde(default)]
-    filename: Option<String>,
+    pub(super) filename: Option<String>,
     #[serde(default)]
-    labels: Vec<Label>,
+    pub(super) labels: Vec<Label>,
 }
 
 #[derive(Deserialize)]
-struct Label {
-    span: Span,
+pub(super) struct Label {
+    pub(super) span: Span,
 }
 
 #[derive(Deserialize)]
-struct Span {
-    line: u64,
-    column: u64,
+pub(super) struct Span {
+    pub(super) line: u64,
+    pub(super) column: u64,
 }
 
-/// Parses `oxlint --format json`: the first JSON value, which prose may precede or follow.
+/// Parses oxlint's output: a JSON report (the first JSON value, which prose may precede or
+/// follow), else its default text format in either of its styles.
 pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     let Some(exit) = output.exit_code else {
         return Parsed::killed();
@@ -47,12 +49,10 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
         let first = serde_json::Deserializer::from_str(json)
             .into_iter::<Report>()
             .next();
-        first.map(|value| value.map(|report| (prose, report)))
+        first.and_then(Result::ok).map(|report| (prose, report))
     });
-    let (prose, report) = match (report, exit) {
-        (Some(Ok(found)), _) => found,
-        (_, 0) => return Parsed::crashed(no_report_reason(output, report_error(output.stdout))),
-        _ => return Parsed::unrecognized("oxlint", exit, output),
+    let Some((prose, report)) = report else {
+        return parse_text(output, context, exit);
     };
     let files = report.number_of_files;
     let findings: Vec<ToolFinding> = report
@@ -71,6 +71,28 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     Parsed::from_findings(findings, Some(files))
 }
 
+/// The text format cannot tell "not oxlint" from "nothing to report", so an exit of 0 without
+/// diagnostics is the tool's own pass, and a non-zero exit without any still blocks.
+fn parse_text(output: &ToolOutput<'_>, context: &ParseContext<'_>, exit: i32) -> Parsed {
+    let (diagnostics, files) = oxlint_text::parse(output.stdout);
+    let findings: Vec<ToolFinding> = diagnostics
+        .into_iter()
+        .map(|d| finding(d, context.cwd))
+        .collect();
+    if !findings.is_empty() {
+        return Parsed::from_findings(findings, files);
+    }
+    if output.stdout.contains(NO_FILES) {
+        return Parsed::from_findings(Vec::new(), Some(0));
+    }
+    if exit == 0 {
+        return Parsed::from_findings(Vec::new(), files);
+    }
+    let mut parsed = Parsed::unrecognized("oxlint", exit, output);
+    parsed.examined = examined_files(files);
+    parsed
+}
+
 /// The prose before the report, and the text from its first line that opens with `{`.
 fn split_json(stdout: &str) -> Option<(&str, &str)> {
     let mut offset = 0;
@@ -81,32 +103,6 @@ fn split_json(stdout: &str) -> Option<(&str, &str)> {
         offset += line.len();
     }
     None
-}
-
-fn report_error(stdout: &str) -> String {
-    match split_json(stdout) {
-        None => "no JSON report".to_string(),
-        Some((_, json)) => match serde_json::Deserializer::from_str(json)
-            .into_iter::<Report>()
-            .next()
-        {
-            Some(Err(error)) => format!("invalid JSON report: {error}"),
-            _ => "no JSON report".to_string(),
-        },
-    }
-}
-
-fn no_report_reason(output: &ToolOutput<'_>, problem: String) -> String {
-    let said = output
-        .stdout
-        .lines()
-        .chain(output.stderr.lines())
-        .map(str::trim)
-        .find(|l| !l.is_empty());
-    match said {
-        Some(line) => format!("oxlint exited 0 with {problem}: {}", clip(line)),
-        None => format!("oxlint exited 0 with {problem}"),
-    }
 }
 
 fn finding(d: Diagnostic, cwd: &str) -> ToolFinding {

@@ -195,9 +195,10 @@ fn oxlint_unreadable_output() {
         "[]",
         "{}",
     ] {
-        assert!(
-            crashed(&run(Adapter::Oxlint, stdout, "", Some(0))),
-            "{stdout:?}"
+        assert_eq!(
+            run(Adapter::Oxlint, stdout, "", Some(0)).outcome,
+            Outcome::Clean,
+            "{stdout:?}: a tool that exits 0 without diagnostics passed by its own word"
         );
         assert_unrecognized(&run(Adapter::Oxlint, stdout, "", Some(1)), "oxlint", 1);
     }
@@ -214,6 +215,69 @@ fn oxlint_unreadable_output() {
     assert_eq!(
         run(Adapter::Oxlint, crlf, "", Some(1)).outcome,
         Outcome::Nothing
+    );
+}
+
+#[test]
+fn oxlint_text_styles_give_severity_rule_and_place() {
+    let graphical = "\n  ! eslint(eqeqeq): Expected ===\n   ,-[src/w.ts:2:12]\n 2 |   a == b;\n   `----\n  help: Prefer ===\n\n  x eslint(no-debugger): no debugger\n   ,-[src/e.ts:7:3]\n   `----\nFound 1 warning and 1 error.\nFinished in 4ms on 9 files using 2 threads.\n";
+    let context = ParseContext {
+        cwd: "packages/app",
+        files: None,
+    };
+    let output = ToolOutput {
+        stdout: graphical,
+        stderr: "",
+        exit_code: Some(1),
+    };
+    let parsed = Adapter::Oxlint.parse(&output, &context);
+    let got: Vec<_> = parsed
+        .findings
+        .iter()
+        .map(|f| {
+            (
+                f.severity,
+                f.rule.as_str(),
+                f.file.as_deref(),
+                f.line.map(|l| l.get()),
+                f.column.map(|c| c.get()),
+                f.message.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                Severity::Warning,
+                "oxlint/eslint/eqeqeq",
+                Some("packages/app/src/w.ts"),
+                Some(2),
+                Some(12),
+                "Expected === (help: Prefer ===)"
+            ),
+            (
+                Severity::Error,
+                "oxlint/eslint/no-debugger",
+                Some("packages/app/src/e.ts"),
+                Some(7),
+                Some(3),
+                "no debugger"
+            ),
+        ]
+    );
+    assert_eq!(parsed.examined.get(FILES), Some(&9));
+    let one_line = "src/a.ts:4:2: warning eslint(eqeqeq): m help: h\n";
+    let parsed = run(Adapter::Oxlint, one_line, "", Some(0));
+    assert_eq!(parsed.findings[0].severity, Severity::Warning);
+    assert_eq!(parsed.findings[0].message, "m (help: h)");
+    assert_eq!(parsed.findings[0].column.map(|c| c.get()), Some(2));
+    let other = run(Adapter::Oxlint, "prettier: all good\n", "", Some(0));
+    assert_eq!(other.outcome, Outcome::Clean);
+    assert_unrecognized(
+        &run(Adapter::Oxlint, "tsup: build failed\n", "", Some(1)),
+        "oxlint",
+        1,
     );
 }
 
@@ -502,7 +566,10 @@ fn exit_code_outcomes() {
     assert_eq!(finding.rule, "exit-code/failed");
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.file, None);
-    assert_eq!(finding.message, "exited with code 3:\nerr 1\nout 1\nout 2");
+    assert_eq!(
+        finding.message,
+        "exited with code 3:\nstderr:\nerr 1\nstdout:\nout 1\nout 2"
+    );
     let silent = run(Adapter::ExitCode, "", "\n\n", Some(1));
     assert_eq!(
         silent.findings[0].message,
@@ -514,8 +581,8 @@ fn exit_code_outcomes() {
 fn exit_code_tail_is_capped() {
     let many: String = (0..100).map(|i| format!("line {i}\r\n")).collect();
     let tail = exit_code::tail("", &many);
-    assert_eq!(tail.lines().count(), 20);
-    assert!(tail.starts_with("line 80\n") && tail.ends_with("line 99"));
+    assert_eq!(tail.lines().count(), 10);
+    assert!(tail.starts_with("line 90\n") && tail.ends_with("line 99"));
     let wide = "é".repeat(3_000_000);
     let tail = exit_code::tail(&wide, "");
     assert!(tail.len() <= 4000 && tail.chars().all(|c| c == 'é'));

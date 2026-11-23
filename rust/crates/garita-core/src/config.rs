@@ -11,7 +11,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::argv::Command;
-use crate::report::{CheckKind, ScopeKind, Trigger};
+use crate::report::{CheckKind, ScopeKind, Severity, Trigger};
 
 pub use duration::{DurationError, parse_duration};
 pub const VIA_TURBO: &str = parse::VIA_TURBO;
@@ -191,6 +191,8 @@ pub struct Check {
     /// Sorted in trigger order (commit, push, ci, merge), whatever order the config lists.
     pub on: Vec<Trigger>,
     pub advisory: bool,
+    /// Tool findings below this severity are dropped and counted, not reported.
+    pub min_severity: Severity,
 }
 
 impl Check {

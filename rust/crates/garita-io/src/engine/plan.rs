@@ -93,9 +93,14 @@ fn try_plan<'a>(
     let wants_files = command.placeholders().contains(&Placeholder::Files);
     let (groups, dropped) = groups(root, check, &files, wants_files)?;
     let mut findings = Vec::new();
-    if dropped > 0 {
+    if wants_files && dropped > 0 {
+        let (verb, pronoun) = if dropped == 1 {
+            ("lies", "it")
+        } else {
+            ("lie", "them")
+        };
         let message = format!(
-            "{} in scope lie outside every directory this check runs in, so it does not see them",
+            "{} in scope {verb} outside every directory this check runs in, so it does not see {pronoun}",
             plural(dropped, "file")
         );
         findings.push(finding(

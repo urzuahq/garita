@@ -31,6 +31,7 @@ fn context(receipt: bool) -> RunContext {
         tree: Some(TREE.into()),
         scope: Some(scope()),
         receipt: receipt.then(|| RECEIPT_PATH.into()),
+        ..RunContext::default()
     }
 }
 
@@ -42,6 +43,7 @@ fn entry(name: &str, kind: CheckKind, status: CheckStatus, files: u64) -> CheckE
         duration_ms: 412,
         examined: [("files".to_string(), files)].into(),
         rerun: Some(format!("garita run {name}")),
+        suppressed: Default::default(),
     }
 }
 

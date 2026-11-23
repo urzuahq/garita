@@ -195,6 +195,10 @@ Only `schema_version` is required. The defaults that matter most:
 - A check takes one of three forms: `run` with a `parser`, `native` (RFC-2), or `builtin`. A `run`
   with no `parser` uses `exit-code`. The one builtin is `clean-tree`.
 - A check with no `on` runs at every trigger.
+- A check reports every finding its tool gives unless it sets `min_severity` (`error`, `warning` or
+  `info`). Findings below it are left out of the verdict and counted in the check's `suppressed`,
+  so a repository with a backlog of warnings can keep them out of an agent's way without hiding
+  that they exist. Garita's own findings about a check are never suppressed.
 - A check runs from the repository root unless it sets `cwd`, a directory inside the repository.
   Files outside a check's `cwd` or its partition roots are left out of that check, and an
   `outside-root` finding at `info` says so.
@@ -204,9 +208,10 @@ Only `schema_version` is required. The defaults that matter most:
   the path of its key.
 
 `{files}` and `{affected}` are filled from the trigger's scope. A check with `{files}` and no matching
-files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose parser
-reports zero files examined when it was given files gets a `no-op` finding at `warning`. A check with
-no placeholder always runs, and what it examined is whatever its adapter reports (RFC-2).
+files is skipped with a `no-input` finding at `info`, so the skip is visible, and a check whose tool
+examined nothing gets a `no-op` finding: a `warning` when the tool exited zero, an `error` when it
+did not. A check with no placeholder always runs, and what it examined is whatever its adapter
+reports (RFC-2).
 
 The `staged` scope reads files from the working tree, not the index. A staged file that also has
 unstaged changes is checked with those changes included, so garita reports it as a `partly-staged`
@@ -311,8 +316,10 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 - A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
   finding saying why) or `not-run`.
 - A finding's `severity` is `error`, `warning` or `info`.
-- `next_action` is the narrowest command that re-runs what failed: the failing check, at the same
-  trigger, on the failing files. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+- `next_action` is the narrowest command that re-runs what failed: the failing checks, at the same
+  trigger, on the failing files when every one of them has files. It never names anything that is
+  not a check: an error that belongs to the run, such as a trigger over its budget, re-runs the
+  whole trigger. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
   `next_action_reason` says why, and `next_action_inputs` lists any placeholders, each as urzua
   prints them: the placeholder, the flag it belongs to and what to put there.
 - `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),

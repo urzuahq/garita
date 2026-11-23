@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use garita_core::adapter::{Adapter, Outcome as Parsed, ParseContext, ToolOutput};
+use garita_core::adapter::{
+    Adapter, Outcome as Parsed, ParseContext, ToolOutput, fingerprint, output_tail,
+};
 use garita_core::config::{Check, Config, OnCrash, OnExceed};
 use garita_core::report::{
     CheckEntry, CheckKind, CheckStatus, Examined, Finding, Severity, Trigger, rerun_command,
@@ -53,6 +56,7 @@ impl CheckResult {
                 duration_ms: 0,
                 examined: Examined::new(),
                 rerun: Some(rerun_command(Some(trigger), name, &[])),
+                suppressed: BTreeMap::new(),
             },
             findings,
             not_run,
@@ -74,6 +78,7 @@ struct Tally<'a> {
     findings: Vec<Finding>,
     examined: Examined,
     not_run: Option<String>,
+    suppressed: BTreeMap<Severity, u64>,
 }
 
 pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResult {
@@ -83,6 +88,7 @@ pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResul
         findings: plan.findings.clone(),
         examined: Examined::new(),
         not_run: None,
+        suppressed: BTreeMap::new(),
     };
     for run in &executed.runs {
         match &run.outcome {
@@ -114,8 +120,13 @@ pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResul
         rerun: Some(rerun_command(
             Some(plan.trigger),
             &check.name,
-            &error_files(&tally.findings),
+            &if plan.given.is_some() {
+                error_files(&tally.findings)
+            } else {
+                Vec::new()
+            },
         )),
+        suppressed: tally.suppressed,
     };
     let units: Vec<_> = executed.runs.iter().map(|r| r.unit.clone()).collect();
     let record = Record {
@@ -173,27 +184,54 @@ impl Tally<'_> {
             *sum = sum.saturating_add(count);
         }
         let name = self.name().to_string();
-        self.findings
-            .extend(parsed.findings.into_iter().map(|f| f.into_finding(&name)));
+        let floor = self.plan.check.min_severity;
+        for f in parsed.findings {
+            if f.severity > floor {
+                *self.suppressed.entry(f.severity).or_insert(0) += 1;
+            } else {
+                self.findings.push(f.into_finding(&name));
+            }
+        }
         match parsed.outcome {
             Parsed::Clean | Parsed::Findings => {}
             Parsed::Crashed { reason } => self.crash(&reason),
-            Parsed::Nothing => {
-                if let Some(n) = given.filter(|n| *n > 0) {
-                    let place = if cwd.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" in {cwd}")
-                    };
-                    let message = format!(
-                        "{name} was given {}{place} and examined none",
-                        plural(usize::try_from(n).unwrap_or(usize::MAX), "file")
-                    );
-                    self.findings
-                        .push(finding(&name, Severity::Warning, "no-op", message));
+            Parsed::Nothing => self.nothing(output, cwd, given),
+        }
+    }
+
+    /// A tool that examined nothing is a finding, never a pass: an error when it also exited
+    /// non-zero, else a warning.
+    fn nothing(&mut self, output: &ToolOutput<'_>, cwd: &str, given: Option<u64>) {
+        let name = self.name().to_string();
+        let place = if cwd.is_empty() {
+            String::new()
+        } else {
+            format!(" in {cwd}")
+        };
+        let code = output.exit_code.filter(|c| *c != 0);
+        let message = match (code, given.filter(|n| *n > 0)) {
+            (Some(code), _) => {
+                let tail = output_tail(output.stderr, output.stdout);
+                let head = format!("{name} exited with code {code} and examined nothing{place}");
+                if tail.is_empty() {
+                    head
+                } else {
+                    format!("{head}:\n{tail}")
                 }
             }
-        }
+            (None, Some(n)) => format!(
+                "{name} was given {}{place} and examined none",
+                plural(usize::try_from(n).unwrap_or(usize::MAX), "file")
+            ),
+            (None, None) => format!("{name} examined nothing{place}"),
+        };
+        let severity = if code.is_some() {
+            Severity::Error
+        } else {
+            Severity::Warning
+        };
+        self.findings
+            .push(finding(&name, severity, "no-op", message));
     }
 
     fn turbo(&mut self, tasks: &Result<Vec<TaskLog>, String>, finished: &Finished) {
@@ -201,23 +239,78 @@ impl Tally<'_> {
         match tasks {
             Ok(tasks) => {
                 for task in tasks {
-                    let output = ToolOutput {
-                        stdout: &task.log,
-                        stderr: "",
-                        exit_code: task.exit_code,
-                    };
-                    self.parsed(&output, &task.directory, None);
+                    match &task.log {
+                        Some(log) => self.task_log(task, log),
+                        None => self.task_without_log(task, finished),
+                    }
                 }
             }
-            Err(reason) => self.unrecognized(reason.clone()),
+            Err(reason) => {
+                let tail = output_tail(&finished.stderr, &finished.stdout);
+                if tail.is_empty() {
+                    self.unrecognized(format!("{reason}; turbo printed nothing"));
+                } else {
+                    self.unrecognized(format!("{reason}; turbo printed:\n{tail}"));
+                }
+            }
         }
         let code = finished.exit_code.unwrap_or_default();
         if code != 0 && self.errors() == errors_before {
-            let tail = garita_core::receipt::output_tail(&finished.stderr);
+            let tail = output_tail(&finished.stderr, &finished.stdout);
             self.unrecognized(format!(
                 "turbo exited with code {code} but no task reported an error:\n{tail}"
             ));
         }
+    }
+
+    fn task_log(&mut self, task: &TaskLog, log: &str) {
+        let output = ToolOutput {
+            stdout: log,
+            stderr: "",
+            exit_code: task.exit_code,
+        };
+        let start = self.findings.len();
+        self.parsed(&output, &task.directory, None);
+        for f in self.findings.iter_mut().skip(start) {
+            if f.file.is_none() {
+                f.message = format!("{}: {}", task.task, f.message);
+                f.fingerprint = Some(fingerprint(&f.rule, None, &f.message));
+            }
+        }
+    }
+
+    /// A task with no log file wrote its output only to turbo's own, so that is the detail.
+    fn task_without_log(&mut self, task: &TaskLog, finished: &Finished) {
+        let failed = match task.exit_code {
+            Some(code) => code != 0,
+            None => finished.exit_code != Some(0),
+        };
+        if !failed {
+            if task.exit_code.is_none() {
+                let name = self.name().to_string();
+                let message = format!("{} has no execution record", task.task);
+                self.findings
+                    .push(finding(&name, Severity::Warning, "no-op", message));
+            }
+            return;
+        }
+        let code = task.exit_code.map_or_else(
+            || "did not finish".to_string(),
+            |c| format!("exited with code {c}"),
+        );
+        let tail = output_tail(&finished.stderr, &finished.stdout);
+        let message = if tail.is_empty() {
+            format!("{}: {code}", task.task)
+        } else {
+            format!("{}: {code}:\n{tail}", task.task)
+        };
+        let name = self.name().to_string();
+        self.findings.push(finding(
+            &name,
+            Severity::Error,
+            "turbo/task-failed",
+            message,
+        ));
     }
 
     fn errors(&self) -> usize {

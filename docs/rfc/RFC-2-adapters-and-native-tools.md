@@ -54,10 +54,12 @@ protocol, with `--describe` returning the `describe` part.
 
 - **Placeholders.** `{files}` and `{affected}` are filled from the scope (RFC-1 §2). A check whose
   command has no placeholder always runs. That is not a `no-input` skip.
-- **Flags the parser needs.** An adapter appends the flags its parser depends on when the command
-  does not carry them: `--format=json` for oxlint, `--pretty false` for tsc run directly, and
-  `--summarize` and `--continue` for turbo. A command that asks oxlint for a different format is a
-  configuration error.
+- **Flags the parser needs.** For a tool garita runs directly, an adapter appends the flags its
+  parser depends on when the command does not carry them: `--format=json` for oxlint and
+  `--pretty false` for tsc. A command that asks oxlint for a different format is a configuration
+  error. For a tool behind a task runner (`via`), garita adds only the runner's own `--summarize`
+  and `--continue`: the tasks are the repository's own scripts, which may not be the tool at all,
+  so nothing is passed through to them.
 - **`partition`.** One run per matching root, from inside it, with paths rebased to the root.
   Findings are mapped back to repository-relative paths.
 - **`exclude`.** Globs removed from the check's input.
@@ -88,11 +90,15 @@ checks:
 - **What was examined.** A count per unit (`files`, `tests`, `packages`), taken from the tool's own
   output where it reports one. This is how a run over nothing is told apart from a pass.
 - **The kind of run.** One of: clean, findings, ran on nothing, or crashed. The adapter decides this
-  from the output and never from the exit code alone. A crash is a tool that was killed, timed out,
-  or exited zero with output the adapter could not read (RFC-1's `on_crash`). A tool that exited
-  non-zero with output the adapter could not read is not a crash: it is one finding at `error`,
-  `<tool>/unrecognized-output`, carrying the tail of the output. A new tool version that words
-  something differently then blocks and says so, and never passes as a warning.
+  from the output and never from the exit code alone. A crash is a tool that was killed or timed
+  out, or one that exited zero with output its adapter expected to read and could not (RFC-1's
+  `on_crash`). A tool that exited non-zero with output the adapter could not read is
+  not a crash: it is one finding at `error`, `<tool>/unrecognized-output`, carrying the lines of its
+  output that look like errors and the last lines of each stream. A new tool version that words
+  something differently then blocks and says so, and never passes as a warning. A run over nothing
+  is always a finding: a `no-op` warning when the tool exited zero, and an error when it did not.
+  The oxlint adapter treats output it cannot read from a tool that exited zero as clean, since it
+  reads plain text as well as JSON and a clean text run prints nothing it can recognise.
 
 What the first adapters read, each settled from a recorded run:
 
@@ -133,7 +139,16 @@ summary, never from the log files. It never parses turbo's prefixed terminal out
 changes from run to run.
 
 A runner returns the highest exit code among its tasks, so it cannot tell findings from a crash. The
-adapter classifies each task separately.
+adapter classifies each task separately, and a finding with no file names its task.
+
+- **Tool output is read as the task printed it.** Behind a runner the oxlint adapter reads oxlint's
+  ordinary text output as well as its JSON, since it cannot ask for JSON. A task that exits zero with
+  output the adapter cannot read is a pass: it may be another tool sharing the task name.
+- **A task with no log.** A runner writes no log for a task it does not cache. Such a task passes
+  when it exited zero, and when it did not, its finding carries the runner's own output.
+- **One at a time.** Checks behind a task runner run strictly one after another, and each accepts
+  only a run summary that holds its own tasks. Two of them running together in one directory could
+  otherwise read each other's results. The runner still runs its own tasks in parallel.
 
 ### 6. Native tools
 

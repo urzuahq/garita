@@ -13,10 +13,12 @@ mod fingerprint;
 mod invoke;
 mod oxfmt;
 mod oxlint;
+mod oxlint_text;
 mod path;
 mod tsc;
 pub mod turbo;
 
+pub use exit_code::{is_noise, is_notable, sanitize, tail as output_tail};
 pub use fingerprint::fingerprint;
 pub use invoke::complete_turbo_argv;
 pub use path::rebase;

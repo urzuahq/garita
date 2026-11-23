@@ -385,6 +385,32 @@ fn check_fields_parse() {
 }
 
 #[test]
+fn min_severity_defaults_to_info_and_takes_three_values() {
+    assert_eq!(
+        ok(&with_check("    run: x\n")).checks[0].min_severity,
+        Severity::Info
+    );
+    for (word, severity) in [
+        ("error", Severity::Error),
+        ("warning", Severity::Warning),
+        ("info", Severity::Info),
+    ] {
+        let c = ok(&with_check(&format!(
+            "    run: x\n    min_severity: {word}\n"
+        )));
+        assert_eq!(c.checks[0].min_severity, severity);
+    }
+    for bad in ["warn", "3", "[error]"] {
+        assert_eq!(
+            paths(&with_check(&format!(
+                "    run: x\n    min_severity: {bad}\n"
+            ))),
+            ["checks.c.min_severity"]
+        );
+    }
+}
+
+#[test]
 fn check_field_errors_are_all_reported() {
     let yaml = with_check(
         "    run: x\n    kind: style\n    on_exceed: maybe\n    advisory: yes\n    \
@@ -456,6 +482,7 @@ fn check_with(budget: Option<u64>, on: Vec<Trigger>, on_exceed: Option<OnExceed>
         on_exceed,
         on,
         advisory: false,
+        min_severity: Severity::Info,
     }
 }
 
