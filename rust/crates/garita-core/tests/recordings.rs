@@ -194,9 +194,14 @@ const LINT_ERROR: Option<&str> = Some("packages/app/src/lint-error.ts");
 fn oxlint_recordings() {
     let rule = "oxlint/eslint/no-debugger";
     let table = [
-        e("clean-default", "crashed", 0, None),
+        e("clean-default", "clean", 0, Some(3)),
         e("clean-json", "clean", 0, Some(3)),
-        unrecognized("errors-two-files-default", "oxlint", 1),
+        e("errors-two-files-default", "findings", 2, Some(5)).first(
+            LINT_ERROR,
+            Some(2),
+            rule,
+            DEBUGGER,
+        ),
         e("errors-two-files-json", "findings", 2, Some(5)).first(
             Some("packages/app/src/lint-error-2.ts"),
             Some(2),
@@ -205,15 +210,25 @@ fn oxlint_recordings() {
         ),
         unrecognized("invalid-config-default", "oxlint", 1),
         unrecognized("invalid-config-json", "oxlint", 1),
-        e("no-files-matched-allowed-default", "crashed", 0, None),
+        e("no-files-matched-allowed-default", "nothing", 0, Some(0)),
         e("no-files-matched-allowed-json", "nothing", 0, Some(0)),
-        unrecognized("no-files-matched-default", "oxlint", 1),
+        e("no-files-matched-default", "nothing", 0, Some(0)),
         e("no-files-matched-json", "nothing", 0, Some(0)),
-        unrecognized("nonexistent-path-default", "oxlint", 1),
+        e("nonexistent-path-default", "nothing", 0, Some(0)),
         e("nonexistent-path-json", "nothing", 0, Some(0)),
-        unrecognized("one-error-default", "oxlint", 1),
-        unrecognized("one-error-default-agent-env", "oxlint", 1),
-        unrecognized("one-error-in-package-default", "oxlint", 1),
+        e("one-error-default", "findings", 1, Some(4)).first(LINT_ERROR, Some(2), rule, DEBUGGER),
+        e("one-error-default-agent-env", "findings", 1, None).first(
+            LINT_ERROR,
+            Some(2),
+            rule,
+            DEBUGGER,
+        ),
+        e("one-error-in-package-default", "findings", 1, Some(4)).first(
+            LINT_ERROR,
+            Some(2),
+            rule,
+            DEBUGGER,
+        ),
         e("one-error-in-package-json", "findings", 1, Some(4)).first(
             LINT_ERROR,
             Some(2),
@@ -227,8 +242,13 @@ fn oxlint_recordings() {
             rule,
             DEBUGGER,
         ),
-        e("version", "crashed", 0, None),
-        e("warning-only-default", "crashed", 0, None),
+        e("version", "clean", 0, None),
+        e("warning-only-default", "findings", 1, Some(4)).first(
+            Some("packages/app/src/lint-warn.ts"),
+            Some(2),
+            "oxlint/eslint/eqeqeq",
+            "Expected === and instead saw == (help: Prefer === operator)",
+        ),
         e("warning-only-json", "findings", 1, Some(4)).first(
             Some("packages/app/src/lint-warn.ts"),
             Some(2),
@@ -635,19 +655,52 @@ fn turbo_type_check_tasks_parse_per_package() {
 }
 
 #[test]
-fn turbo_lint_logs_in_the_default_format_never_pass() {
+fn turbo_lint_logs_in_the_default_format_are_read_per_package() {
     let case = "lint-check-summarize";
     let summary =
         turbo::parse_summary(&read(&root().join(TURBO).join(case).join("summary.json"))).unwrap();
-    for task in &summary.tasks {
-        let parsed = parse_task_log(case, task, Adapter::Oxlint);
-        let expected = match task.exit_code {
-            Some(0) => "crashed",
-            _ => "findings",
-        };
-        assert_eq!(parsed.outcome.name(), expected, "{}", task.task_id);
-        if expected == "findings" {
-            assert_eq!(parsed.findings[0].rule, "oxlint/unrecognized-output");
-        }
-    }
+    let got: Vec<_> = summary
+        .tasks
+        .iter()
+        .map(|task| {
+            let parsed = parse_task_log(case, task, Adapter::Oxlint);
+            let first = parsed.findings.first().map(|f| {
+                (
+                    f.severity,
+                    f.rule.clone(),
+                    f.file.clone(),
+                    f.line.map(|l| l.get()),
+                )
+            });
+            (task.directory.clone(), parsed.outcome.name(), first)
+        })
+        .collect();
+    let finding = |severity, rule: &str, file: &str| {
+        Some((severity, rule.to_string(), Some(file.to_string()), Some(2)))
+    };
+    use garita_core::report::Severity;
+    assert_eq!(
+        got,
+        [
+            ("packages/app".to_string(), "clean", None),
+            (
+                "packages/docs".to_string(),
+                "findings",
+                finding(
+                    Severity::Warning,
+                    "oxlint/eslint/eqeqeq",
+                    "packages/docs/src/lint-warn.ts"
+                )
+            ),
+            (
+                "packages/lib".to_string(),
+                "findings",
+                finding(
+                    Severity::Error,
+                    "oxlint/eslint/no-debugger",
+                    "packages/lib/src/lint-error.ts"
+                )
+            ),
+        ]
+    );
 }

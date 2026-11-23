@@ -203,18 +203,9 @@ impl Tally<'_> {
         match tasks {
             Ok(tasks) => {
                 for task in tasks {
-                    let output = ToolOutput {
-                        stdout: &task.log,
-                        stderr: "",
-                        exit_code: task.exit_code,
-                    };
-                    let start = self.findings.len();
-                    self.parsed(&output, &task.directory, None);
-                    for f in self.findings.iter_mut().skip(start) {
-                        if f.file.is_none() {
-                            f.message = format!("{}: {}", task.task, f.message);
-                            f.fingerprint = Some(fingerprint(&f.rule, None, &f.message));
-                        }
+                    match &task.log {
+                        Some(log) => self.task_log(task, log),
+                        None => self.task_without_log(task, finished),
                     }
                 }
             }
@@ -234,6 +225,50 @@ impl Tally<'_> {
                 "turbo exited with code {code} but no task reported an error:\n{tail}"
             ));
         }
+    }
+
+    fn task_log(&mut self, task: &TaskLog, log: &str) {
+        let output = ToolOutput {
+            stdout: log,
+            stderr: "",
+            exit_code: task.exit_code,
+        };
+        let start = self.findings.len();
+        self.parsed(&output, &task.directory, None);
+        for f in self.findings.iter_mut().skip(start) {
+            if f.file.is_none() {
+                f.message = format!("{}: {}", task.task, f.message);
+                f.fingerprint = Some(fingerprint(&f.rule, None, &f.message));
+            }
+        }
+    }
+
+    /// A task with no log file wrote its output only to turbo's own, so that is the detail.
+    fn task_without_log(&mut self, task: &TaskLog, finished: &Finished) {
+        let failed = match task.exit_code {
+            Some(code) => code != 0,
+            None => finished.exit_code != Some(0),
+        };
+        if !failed {
+            return;
+        }
+        let code = task.exit_code.map_or_else(
+            || "did not finish".to_string(),
+            |c| format!("exited with code {c}"),
+        );
+        let tail = output_tail(&finished.stderr, &finished.stdout);
+        let message = if tail.is_empty() {
+            format!("{}: {code}", task.task)
+        } else {
+            format!("{}: {code}:\n{tail}", task.task)
+        };
+        let name = self.name().to_string();
+        self.findings.push(finding(
+            &name,
+            Severity::Error,
+            "turbo/task-failed",
+            message,
+        ));
     }
 
     fn errors(&self) -> usize {

@@ -148,6 +148,10 @@ fn a_trigger_over_budget_with_a_failing_check_reruns_a_command_that_runs() {
     let out = repo.run();
     let next = out.report.next_action.clone().unwrap_or_default();
     assert_eq!(next, "garita run");
+    assert_eq!(
+        out.report.next_action_reason.as_deref(),
+        Some("2 errors: 1 in 1 check, 1 for the run")
+    );
     let words: Vec<&str> = next.split_whitespace().collect();
     assert_eq!(words.get(..2), Some(&["garita", "run"][..]));
     let mut request = repo.request(Trigger::Commit);

@@ -37,8 +37,7 @@ pub struct Executed {
 }
 
 /// Runs every plan on a pool sized to the machine; each plan's units run in turn, and `via`
-/// plans sharing a directory run one after another, since each reads the run summary turbo
-/// leaves there.
+/// plans run one after another, since each reads the run summary its task runner leaves.
 pub fn run_all(root: &Path, run_id: &str, plans: &[Plan<'_>]) -> Vec<Executed> {
     let jobs = jobs(plans);
     let workers = thread::available_parallelism()
@@ -75,30 +74,15 @@ pub fn run_all(root: &Path, run_id: &str, plans: &[Plan<'_>]) -> Vec<Executed> {
         .collect()
 }
 
-/// Plan indices grouped into jobs: one per plan, except that `via` plans whose units share a
-/// directory form one job.
+/// Plan indices grouped into jobs: every `via` plan in one job, in config order, and each other
+/// plan alone.
 fn jobs(plans: &[Plan<'_>]) -> Vec<Vec<usize>> {
-    let mut jobs: Vec<Vec<usize>> = Vec::new();
-    let mut by_dir: Vec<(Vec<&str>, usize)> = Vec::new();
-    for (i, plan) in plans.iter().enumerate() {
-        if !plan.turbo {
-            jobs.push(vec![i]);
-            continue;
-        }
-        let dirs: Vec<&str> = plan.units.iter().map(|u| u.cwd.as_str()).collect();
-        let shared = by_dir
-            .iter()
-            .find(|(seen, _)| seen.iter().any(|d| dirs.contains(d)))
-            .map(|(_, job)| *job);
-        match shared.and_then(|job| jobs.get_mut(job)) {
-            Some(job) => job.push(i),
-            None => {
-                by_dir.push((dirs, jobs.len()));
-                jobs.push(vec![i]);
-            }
-        }
-    }
-    jobs
+    let (via, alone): (Vec<usize>, Vec<usize>) =
+        (0..plans.len()).partition(|&i| plans.get(i).is_some_and(|p| p.turbo));
+    std::iter::once(via)
+        .filter(|job| !job.is_empty())
+        .chain(alone.into_iter().map(|i| vec![i]))
+        .collect()
 }
 
 fn lost() -> Executed {

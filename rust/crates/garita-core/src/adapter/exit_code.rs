@@ -54,7 +54,7 @@ pub fn tail(stderr: &str, stdout: &str) -> String {
         0
     };
     let share = TAIL_BYTES.saturating_sub(labels) / blocks.len().max(1);
-    blocks
+    let joined = blocks
         .iter()
         .map(|(label, lines)| {
             let body = last_bytes(&lines.join("\n"), share);
@@ -64,8 +64,8 @@ pub fn tail(stderr: &str, stdout: &str) -> String {
                 body
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+    sanitize(&joined.join("\n"))
 }
 
 fn last_lines(text: &str) -> Vec<&str> {
@@ -101,22 +101,121 @@ fn notable_lines<'a>(
     found
 }
 
-fn is_notable(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("(node:") || line.contains("DeprecationWarning") {
+const KEYWORDS: [&str; 10] = [
+    "error", "errors", "invalid", "failed", "failure", "failing", "fatal", "panic", "panicked",
+    "fail",
+];
+const NEGATED_BEFORE: [&str; 3] = ["0", "no", "without"];
+
+/// Whether `line` names a failure: a whole-word keyword that is not negated or counted as zero,
+/// a `SomethingError:` token, or a failure marker at its start.
+pub fn is_notable(line: &str) -> bool {
+    if is_noise(line) {
         return false;
     }
-    let lower = line.to_ascii_lowercase();
-    ["error", "invalid", "failed", "fail:"].iter().any(|word| {
-        lower.match_indices(word).any(|(at, _)| {
-            lower
-                .get(..at)
-                .unwrap_or_default()
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_ascii_alphabetic())
+    let trimmed = line.trim_start();
+    let marker = ["FAIL ", "× ", "✗ ", "x "].iter().any(|m| {
+        trimmed
+            .strip_prefix(m)
+            .is_some_and(|rest| !rest.trim().is_empty())
+    });
+    let words = tokens(line);
+    marker || (0..words.len()).any(|i| keyword_at(&words, i))
+}
+
+/// Words of letters and digits, with the text that follows each.
+fn tokens(line: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (at, c) in line
+        .char_indices()
+        .chain(std::iter::once((line.len(), ' ')))
+    {
+        match (start, c.is_alphanumeric() || c == '_') {
+            (None, true) => start = Some(at),
+            (Some(from), false) => {
+                out.push((
+                    line.get(from..at).unwrap_or_default(),
+                    line.get(at..).unwrap_or_default(),
+                ));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn keyword_at(all: &[(&str, &str)], i: usize) -> bool {
+    let Some((word, after)) = all.get(i) else {
+        return false;
+    };
+    if word.len() > 5 && word.ends_with("Error") && after.starts_with(':') {
+        return true;
+    }
+    let lower = word.to_ascii_lowercase();
+    if !KEYWORDS.contains(&lower.as_str()) {
+        return false;
+    }
+    if lower == "fail" && !(after.starts_with(':') || *word == "FAIL") {
+        return false;
+    }
+    let before = i
+        .checked_sub(1)
+        .and_then(|j| all.get(j))
+        .map(|(w, _)| w.to_ascii_lowercase());
+    let negated_before = before
+        .as_deref()
+        .is_some_and(|b| NEGATED_BEFORE.contains(&b));
+    let zero_after = after.strip_prefix(':').is_some_and(|rest| {
+        rest.trim_start()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            == Some("0")
+    });
+    !negated_before && !zero_after
+}
+
+/// Lines that never explain a failure: runtime warnings, banners, and source excerpts.
+pub fn is_noise(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with("(node:")
+        || line.contains("DeprecationWarning")
+        || trimmed.starts_with("(Use `node --trace-")
+    {
+        return true;
+    }
+    if [",-[", "`----", "·", "╭", "╰", "│"]
+        .iter()
+        .any(|p| trimmed.starts_with(p))
+    {
+        return true;
+    }
+    let digits = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
+    if digits.len() < trimmed.len() && digits.trim_start().starts_with(['|', '│']) {
+        return true;
+    }
+    let mut words = trimmed.split_whitespace();
+    matches!(
+        (words.next(), words.next(), words.next()),
+        (Some(name), Some(version), None)
+            if name.chars().all(|c| c.is_alphanumeric() || "-_@/".contains(c))
+                && version.trim_start_matches('v').starts_with(|c: char| c.is_ascii_digit())
+                && version.contains('.')
+    )
+}
+
+/// Control characters other than tab and newline become `?`, so output cannot drive a terminal.
+pub fn sanitize(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() && c != '\t' && c != '\n' {
+                '?'
+            } else {
+                c
+            }
         })
-    })
+        .collect()
 }
 
 fn last_bytes(text: &str, limit: usize) -> String {
@@ -182,6 +281,78 @@ mod tests {
         );
         let got = tail("Error 1\nError 1\n", "");
         assert_eq!(got, "Error 1\nError 1");
+    }
+
+    #[test]
+    fn keywords_are_whole_words_and_not_negated() {
+        for line in [
+            "error: x",
+            "src/a.ts(1,2): error TS2322: bad",
+            "Error: boom",
+            "[error] it broke",
+            "2 errors",
+            "build failed",
+            "test failure in a",
+            "1 failing",
+            "FAIL: thing",
+            "thread 'main' panicked at src/x.rs",
+            "panic: runtime error",
+            "FATAL: migration 42 out of order",
+            "AssertionError: expected 1",
+            "TypeError: x is undefined",
+            "x eslint(no-debugger): `debugger` statement is not allowed",
+            " FAIL  src/a.test.ts > ab fails",
+            "× parse failed",
+            "✗ step 3",
+            "0004-x.md: invalid status \"Acceptedd\"",
+        ] {
+            assert!(is_notable(line), "{line}");
+        }
+        for line in [
+            "Found 0 errors.",
+            "pkg-a: Found 0 errors.",
+            "no error in pkg 2",
+            "no errors",
+            "errors: 0",
+            "error: 0",
+            "0 failed, 3 passed",
+            "0 failures",
+            "no failures",
+            "finished without error",
+            "src/errorHandler.ts",
+            "failedCount=3",
+            "the word failure_rate",
+            "fail without colon",
+            "x",
+            "(node:3974505) [DEP0169] DeprecationWarning: url.parse() error",
+            "(Use `node --trace-deprecation ...` to show where the warning was created)",
+            "83 | | (error: unknown) => {",
+            "  12 │ throw new Error('x')",
+            "   ,-[src/error.ts:2:3]",
+            "   `---- error",
+            "  · error here",
+            "╭─[error.ts]",
+            "╰── error",
+            "│ error",
+        ] {
+            assert!(!is_notable(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn noise_covers_banners_and_excerpts_only() {
+        for line in ["turbo 2.5.6", "pnpm v9.1.0", "83 | code", "(node:1) x"] {
+            assert!(is_noise(line), "{line}");
+        }
+        for line in ["turbo failed", "step 2 of 3", "a b c 1.0", "FATAL: x"] {
+            assert!(!is_noise(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn control_characters_are_replaced() {
+        assert_eq!(sanitize("a\u{1b}[2Jb\tc\nd\u{7}"), "a?[2Jb\tc\nd?");
+        assert_eq!(tail("\u{0}bin\u{8}ary\n", ""), "?bin?ary");
     }
 
     #[test]

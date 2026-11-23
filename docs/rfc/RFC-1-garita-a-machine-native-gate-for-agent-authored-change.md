@@ -311,8 +311,10 @@ Garita treats a limit the same way it treats a lint rule: crossing it is a findi
 - A check's own `status` is `pass`, `warn`, `fail`, `skipped` (with a `no-input` or `demoted`
   finding saying why) or `not-run`.
 - A finding's `severity` is `error`, `warning` or `info`.
-- `next_action` is the narrowest command that re-runs what failed: the failing check, at the same
-  trigger, on the failing files. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
+- `next_action` is the narrowest command that re-runs what failed: the failing checks, at the same
+  trigger, on the failing files when every one of them has files. It never names anything that is
+  not a check: an error that belongs to the run, such as a trigger over its budget, re-runs the
+  whole trigger. On `not-run` it is `garita doctor`. It is `null` on `pass` and `warn`.
   `next_action_reason` says why, and `next_action_inputs` lists any placeholders, each as urzua
   prints them: the placeholder, the flag it belongs to and what to put there.
 - `examined` is what the check actually covered, one count per unit (`files`, `tests`, `packages`),

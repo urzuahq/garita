@@ -1,3 +1,4 @@
+use garita_core::adapter::{is_noise, sanitize};
 use garita_core::report::{CheckStatus, Report, RunStatus, Severity};
 
 /// The error under one `error:` label, its later lines indented beneath it.
@@ -73,11 +74,11 @@ fn brief(message: &str) -> String {
     let mut lines = message.lines();
     let first = lines.next().unwrap_or_default().trim();
     if !first.ends_with(':') {
-        return first.to_string();
+        return sanitize(first);
     }
     match reason(lines) {
-        Some(reason) => format!("{first} {}", clip(reason)),
-        None => first.to_string(),
+        Some(reason) => sanitize(&format!("{first} {}", clip(reason))),
+        None => sanitize(first.trim_end_matches(':')),
     }
 }
 
@@ -91,8 +92,9 @@ fn clip(line: &str) -> &str {
     line.get(..end).unwrap_or_default()
 }
 
-/// The first `notable:` line, else the last `stderr:` line, else the last of `stdout:` or of an
-/// unlabelled block.
+/// The last `stderr:` line that is not noise, else the first `notable:` line, else the last
+/// line of `stdout:` or of an unlabelled block that is not noise. A tool's final word on stderr
+/// is its most reliable reason; notable lines stand in when stderr is empty or only noise.
 fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     let mut section = "";
     let mut notable = None;
@@ -106,6 +108,9 @@ fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
             section = label;
             continue;
         }
+        if is_noise(line) {
+            continue;
+        }
         match section {
             "notable:" => {
                 notable.get_or_insert(line);
@@ -114,7 +119,7 @@ fn reason<'a>(lines: impl Iterator<Item = &'a str>) -> Option<&'a str> {
             _ => other = Some(line),
         }
     }
-    notable.or(stderr).or(other)
+    stderr.or(notable).or(other)
 }
 
 /// ` - <place><rule> <message>` for the check's first finding of its worst severity, with how
@@ -220,22 +225,45 @@ mod tests {
             brief("Unexpected `debugger`\nhelp"),
             "Unexpected `debugger`"
         );
-        assert_eq!(brief("exited with code 1:"), "exited with code 1:");
+        assert_eq!(brief("exited with code 1:"), "exited with code 1");
     }
 
     #[test]
-    fn the_reason_line_is_the_notable_then_stderr_then_stdout_line() {
+    fn the_reason_line_is_stderrs_last_then_notable_then_stdouts_last() {
+        use garita_core::adapter::output_tail;
+        let pick = |stderr: &str, stdout: &str| {
+            brief(&format!(
+                "exited with code 1:\n{}",
+                output_tail(stderr, stdout)
+            ))
+        };
         assert_eq!(
-            brief("exited with code 1:\n(node:1) DeprecationWarning\nturbo 2.5.6\nreal reason"),
-            "exited with code 1: real reason"
+            pick(
+                "FATAL: migration 42 out of order\n",
+                "pkg-a: Found 0 errors.\n"
+            ),
+            "exited with code 1: FATAL: migration 42 out of order"
+        );
+        let mut long: String = (1..=200).map(|i| format!("ok {i}\n")).collect();
+        long.insert_str(
+            0,
+            "a.md: fine\nb.md: fine\nx.md: invalid status \"Acceptedd\"\n",
         );
         assert_eq!(
-            brief("exited with code 1:\nstderr:\nwhy\nwhy last\nstdout:\nnoise"),
+            pick(
+                "(node:1) [DEP0169] DeprecationWarning: url.parse()\n",
+                &long
+            ),
+            "exited with code 1: x.md: invalid status \"Acceptedd\""
+        );
+        assert_eq!(pick("", "turbo 2.5.6\n"), "exited with code 1");
+        assert_eq!(
+            pick("", "starting\ndone with step 3\nturbo 2.5.6\n"),
+            "exited with code 1: done with step 3"
+        );
+        assert_eq!(
+            pick("why\nwhy last\n", "noise\n"),
             "exited with code 1: why last"
-        );
-        assert_eq!(
-            brief("exited with code 1:\nnotable:\nbad: invalid\nlater error\nstderr:\nx"),
-            "exited with code 1: bad: invalid"
         );
         assert_eq!(
             brief("exited with code 1 and printed nothing\nx"),
@@ -243,6 +271,10 @@ mod tests {
         );
         let long = brief(&format!("exited with code 1:\n{}", "é".repeat(500)));
         assert!(long.len() < 250, "{long}");
+        assert_eq!(
+            brief("exited with code 1:\nbin\u{1b}[2Jary"),
+            "exited with code 1: bin?[2Jary"
+        );
     }
 
     #[test]

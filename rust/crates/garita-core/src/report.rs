@@ -352,12 +352,16 @@ fn not_run_reason(checks: &[CheckEntry]) -> String {
     }
 }
 
+/// `N errors in M checks`, with `, K for the run` when some belong to no listed check.
 fn fail_reason(checks: &[CheckEntry], findings: &[Finding]) -> String {
     let mut names: Vec<&str> = Vec::new();
     let mut errors = 0;
+    let mut run_level = 0;
     for f in findings.iter().filter(|f| f.severity == Severity::Error) {
         errors += 1;
-        if !names.contains(&f.check.as_str()) {
+        if !checks.iter().any(|c| c.name == f.check) {
+            run_level += 1;
+        } else if !names.contains(&f.check.as_str()) {
             names.push(&f.check);
         }
     }
@@ -368,11 +372,20 @@ fn fail_reason(checks: &[CheckEntry], findings: &[Finding]) -> String {
             .count();
         return format!("{} failed", plural(failed, "check"));
     }
-    format!(
-        "{} in {}",
-        plural(errors, "error"),
-        plural(names.len(), "check")
-    )
+    match (names.len(), run_level) {
+        (_, 0) => format!(
+            "{} in {}",
+            plural(errors, "error"),
+            plural(names.len(), "check")
+        ),
+        (0, _) => format!("{} for the run", plural(errors, "error")),
+        (n, k) => format!(
+            "{}: {} in {}, {k} for the run",
+            plural(errors, "error"),
+            errors - k,
+            plural(n, "check")
+        ),
+    }
 }
 
 fn plural(count: usize, noun: &str) -> String {
@@ -714,6 +727,24 @@ mod tests {
     }
 
     #[test]
+    fn a_run_level_error_is_not_counted_as_a_check() {
+        let checks = [check("a", CheckStatus::Fail, 1)];
+        let f = [
+            finding("a", Severity::Error, None),
+            finding("garita", Severity::Error, None),
+        ];
+        let next = next_action(None, RunStatus::Fail, &checks, &f);
+        assert_eq!(next.action.as_deref(), Some("garita run"));
+        assert_eq!(
+            next.reason.as_deref(),
+            Some("2 errors: 1 in 1 check, 1 for the run")
+        );
+        let only = [finding("garita", Severity::Error, None)];
+        let next = next_action(None, RunStatus::Fail, &checks, &only);
+        assert_eq!(next.reason.as_deref(), Some("1 error for the run"));
+    }
+
+    #[test]
     fn an_error_outside_every_check_reruns_the_whole_trigger() {
         let checks = [
             check("lint", CheckStatus::Fail, 1),
@@ -726,7 +757,10 @@ mod tests {
         ];
         let next = next_action(Some(Trigger::Push), RunStatus::Fail, &checks, &f);
         assert_eq!(next.action.as_deref(), Some("garita run --trigger push"));
-        assert_eq!(next.reason.as_deref(), Some("3 errors in 3 checks"));
+        assert_eq!(
+            next.reason.as_deref(),
+            Some("3 errors: 2 in 2 checks, 1 for the run")
+        );
     }
 
     #[test]

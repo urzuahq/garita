@@ -137,46 +137,61 @@ fn lint_repo(body: &str) -> Repo {
     repo
 }
 
-/// Each task's log as pnpm wraps it: its echo of the command, oxlint's JSON, its failure line.
-fn writes_oxlint_logs() -> String {
+/// Each task's log as pnpm wraps it: its echo of the command, the script's own output, and its
+/// failure line. `app` runs oxlint cleanly, `lib` finds an error, and `docs` is another tool.
+fn writes_lint_logs(docs_fails: bool) -> String {
     let oxlint = recording("oxlint@1.94.0");
     let turbo = recording(LINT_CASE);
-    let task = |pkg: &str, case: &str, failed: bool| {
-        let tail = if failed {
-            "printf '[ELIFECYCLE] Command failed with exit code 1.\\n'"
-        } else {
-            "true"
-        };
+    let failed = "printf '[ELIFECYCLE] Command failed with exit code 1.\\n'";
+    let task = |pkg: &str, source: String, failed: Option<&str>| {
         format!(
-            "{{ printf '$ oxlint src --format=json\\n'; cat '{o}/{case}/stdout'; {tail}; }} \
-             > 'packages/{pkg}/{LOG}'\n",
-            o = oxlint.display()
+            "{{ printf '$ lint\\n'; {source}; {}; }} > 'packages/{pkg}/{LOG}'\n",
+            failed.unwrap_or("true")
         )
+    };
+    let recorded = |case: &str| format!("cat '{}/{case}/stdout'", oxlint.display());
+    let docs_exit = if docs_fails {
+        // The third exit code in the recorded summary, after the run's and app's, is docs'.
+        "awk '/\"exitCode\"/ { n++; if (n == 3) sub(/0/, \"1\") } { print }' .turbo/runs/LINT.json \
+         > .turbo/runs/LINT.tmp && mv .turbo/runs/LINT.tmp .turbo/runs/LINT.json\n"
+    } else {
+        ""
     };
     format!(
         "mkdir -p .turbo/runs packages/app/.turbo packages/docs/.turbo packages/lib/.turbo\n\
-         cp '{}/summary.json' .turbo/runs/LINT.json\n{}{}{}exit 1",
+         cp '{}/summary.json' .turbo/runs/LINT.json\n{docs_exit}{}{}{}exit 1",
         turbo.display(),
-        task("app", "no-files-matched-json", false),
-        task("docs", "clean-json", false),
-        task("lib", "one-error-in-package-json", true),
+        task("app", recorded("clean-default"), None),
+        task(
+            "docs",
+            "printf 'markdownlint: checked 12 files\\nsee {{ docs }} for details\\n'".to_string(),
+            docs_fails.then_some("printf 'markdownlint: MD013 line too long\\n'; false"),
+        ),
+        task(
+            "lib",
+            recorded("one-error-in-package-default"),
+            Some(failed)
+        ),
     )
 }
 
-#[test]
-fn oxlint_through_turbo_gets_its_flag_after_the_separator_and_reports_file_and_line() {
-    let repo = lint_repo(&writes_oxlint_logs());
-    let out = repo.run();
-    assert_eq!(
-        repo.log("turbo"),
-        vec!["lint:check --output-logs=errors-only --summarize --continue -- --format=json"]
-    );
-    let errors: Vec<_> = out
-        .report
+fn errors(report: &garita_core::report::Report) -> Vec<&garita_core::report::Finding> {
+    report
         .findings
         .iter()
         .filter(|f| f.severity == Severity::Error)
-        .collect();
+        .collect()
+}
+
+#[test]
+fn oxlint_through_turbo_reads_each_scripts_own_output_and_injects_nothing() {
+    let repo = lint_repo(&writes_lint_logs(false));
+    let out = repo.run();
+    assert_eq!(
+        repo.log("turbo"),
+        vec!["lint:check --output-logs=errors-only --summarize --continue"]
+    );
+    let errors = errors(&out.report);
     assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
     assert_eq!(
         errors[0].file.as_deref(),
@@ -185,6 +200,30 @@ fn oxlint_through_turbo_gets_its_flag_after_the_separator_and_reports_file_and_l
     assert_eq!(errors[0].line.map(|l| l.get()), Some(2));
     assert_eq!(errors[0].rule, "oxlint/eslint/no-debugger");
     assert_eq!(check(&out.report, "lint").status, CheckStatus::Fail);
+    assert_eq!(out.exit_code(), 1);
+}
+
+#[test]
+fn another_tool_failing_through_turbo_is_named_for_its_task() {
+    let repo = lint_repo(&writes_lint_logs(true));
+    let out = repo.run();
+    let errors = errors(&out.report);
+    assert_eq!(errors.len(), 2, "{:#?}", out.report.findings);
+    let docs = errors
+        .iter()
+        .find(|f| f.rule == "oxlint/unrecognized-output")
+        .unwrap_or_else(|| panic!("{:#?}", out.report.findings));
+    assert!(
+        docs.message.starts_with("@fixture/docs#lint:check: "),
+        "{}",
+        docs.message
+    );
+    assert!(
+        docs.message.contains("MD013 line too long"),
+        "{}",
+        docs.message
+    );
+    assert_eq!(out.exit_code(), 1);
 }
 
 #[test]
@@ -308,4 +347,93 @@ fn two_turbo_checks_in_one_directory_each_read_only_their_own_summary() {
             assert!(!messages[0].contains(other), "{}", messages[0]);
         }
     }
+}
+
+/// `<name> <sleep before> <exit code> [sleep after writing the summary]`: a task runner with no
+/// `turbo` in its name, so any new summary in its directory reads as its own.
+const RUNNER: &str = r#"sleep "$2"
+mkdir -p .turbo/runs "packages/$1/.turbo"
+echo "$1 says exit $3" > "packages/$1/.turbo/t.log"
+printf '{"tasks":[{"taskId":"%s#t","task":"t","package":"%s","directory":"packages/%s","logFile":"packages/%s/.turbo/t.log","cache":{"status":"MISS"},"execution":{"exitCode":%s}}]}' "$1" "$1" "$1" "$1" "$3" > ".turbo/runs/$1-$$.json"
+sleep "${4:-0}"
+exit "$3""#;
+
+#[test]
+fn via_checks_run_one_at_a_time_whatever_their_directories() {
+    let repo = Repo::new();
+    let pk = repo.tool("pk", RUNNER);
+    let pk2 = repo.tool("pk2", RUNNER);
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  \
+         a: {{ run: {pk} a 0.1 0, via: turbo, partition: {{ by: dir, roots: [p] }} }}\n  \
+         b: {{ run: {pk2} b 0.7 1, via: turbo, cwd: q }}\n  \
+         c: {{ run: {pk2} c 0.05 0 0.4, via: turbo, partition: {{ by: dir, roots: [p, q] }} }}\n"
+    ));
+    repo.write("p/x.ts", "x\n");
+    repo.write("q/y.ts", "y\n");
+    repo.stage(&["p/x.ts", "q/y.ts"]);
+    for _ in 0..3 {
+        let out = repo.run();
+        let failed: Vec<&str> = out
+            .report
+            .checks
+            .iter()
+            .filter(|c| c.status != CheckStatus::Pass)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(failed, ["b"], "{:#?}", out.report.findings);
+        assert_eq!(check(&out.report, "c").status, CheckStatus::Pass);
+    }
+}
+
+/// A summary whose tasks are not cached, so turbo names no log file for any of them.
+fn uncached_turbo(b_exit: i32) -> Repo {
+    let repo = Repo::new();
+    let task = |pkg: &str, code: i32| {
+        format!(
+            "{{\"taskId\":\"{pkg}#check\",\"task\":\"check\",\"package\":\"{pkg}\",\
+             \"directory\":\"packages/{pkg}\",\"logFile\":null,\"cache\":{{\"status\":\"MISS\"}},\
+             \"execution\":{{\"exitCode\":{code}}}}}"
+        )
+    };
+    let summary = format!("{{\"tasks\":[{},{}]}}", task("a", 0), task("b", b_exit));
+    let say = if b_exit == 0 {
+        "echo 'b:check: all fine'".to_string()
+    } else {
+        "echo 'b:check: FATAL: schema 7 is missing' >&2".to_string()
+    };
+    let tool = repo.tool(
+        "turbo",
+        &format!(
+            "mkdir -p .turbo/runs\nprintf '%s' '{summary}' > .turbo/runs/U.json\n{say}\nexit {b_exit}"
+        ),
+    );
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  check:\n    run: {tool} run check\n    via: turbo\n"
+    ));
+    repo
+}
+
+#[test]
+fn tasks_without_log_files_that_succeed_pass() {
+    let out = uncached_turbo(0).run_at(Trigger::Ci);
+    assert_eq!(check(&out.report, "check").status, CheckStatus::Pass);
+    assert_eq!(out.exit_code(), 0, "{:#?}", out.report.findings);
+}
+
+#[test]
+fn a_failing_task_without_a_log_file_shows_turbos_own_output() {
+    let out = uncached_turbo(1).run_at(Trigger::Ci);
+    let errors = errors(&out.report);
+    assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
+    assert_eq!(errors[0].rule, "turbo/task-failed");
+    assert!(
+        errors[0]
+            .message
+            .starts_with("b#check: exited with code 1:"),
+        "{}",
+        errors[0].message
+    );
+    assert!(errors[0].message.contains("FATAL: schema 7 is missing"));
+    assert_eq!(out.exit_code(), 1);
 }

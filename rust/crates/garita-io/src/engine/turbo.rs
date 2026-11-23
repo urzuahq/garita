@@ -15,7 +15,8 @@ pub struct TaskLog {
     pub task: String,
     /// Repository-relative.
     pub directory: String,
-    pub log: String,
+    /// `None` when the summary names no log file, as for a task that is not cached.
+    pub log: Option<String>,
     pub exit_code: Option<i32>,
 }
 
@@ -69,24 +70,25 @@ pub fn read(
     parsed
         .tasks
         .into_iter()
+        .filter(|task| task.log_file.is_some() || task.exit_code != Some(0))
         .map(|task| {
-            let Some(log_file) = task.log_file.as_deref() else {
-                return Err(format!(
-                    "turbo's summary names no log file for {}",
-                    task.task_id
-                ));
+            let log = match task.log_file.as_deref() {
+                None => None,
+                Some(log_file) => {
+                    let path = cwd.join(log_file);
+                    let log = fs::read_to_string(&path).map_err(|e| {
+                        format!(
+                            "the log of {} at {} cannot be read: {e}",
+                            task.task_id,
+                            path.display()
+                        )
+                    })?;
+                    Some(clean_log(&log).to_string())
+                }
             };
-            let path = cwd.join(log_file);
-            let log = fs::read_to_string(&path).map_err(|e| {
-                format!(
-                    "the log of {} at {} cannot be read: {e}",
-                    task.task_id,
-                    path.display()
-                )
-            })?;
             Ok(TaskLog {
                 directory: rebase(cwd_rel, &task.directory),
-                log: clean_log(&log).to_string(),
+                log,
                 exit_code: task.exit_code,
                 task: task.task_id,
             })
