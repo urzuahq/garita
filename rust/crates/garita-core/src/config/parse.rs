@@ -453,8 +453,12 @@ impl Walker {
         let mut checks = Vec::new();
         for (key, v) in map {
             match key.as_str() {
-                Some(name) if !name.is_empty() => checks.extend(self.check(name, v)),
-                _ => self.wrong_type("checks", "check names that are non-empty strings"),
+                Some(name) if is_check_name(name) => checks.extend(self.check(name, v)),
+                Some(name) => self.invalid(
+                    &join("checks", name),
+                    "a check name starts with a letter or digit and holds only letters, digits, `-`, `_` and `.`",
+                ),
+                None => self.wrong_type("checks", "check names that are strings"),
             }
         }
         checks
@@ -652,4 +656,10 @@ impl Walker {
         on.sort();
         ok.then_some(on)
     }
+}
+
+fn is_check_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }

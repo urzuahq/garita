@@ -626,3 +626,20 @@ fn anchors_and_aliases_are_accepted() {
     assert_eq!(c.checks.len(), 2);
     assert_eq!(c.checks[1].on, [Trigger::Ci]);
 }
+
+#[test]
+fn a_check_name_that_reads_as_a_flag_is_rejected() {
+    for name in ["--all", "-x", "a b", "", "lint!"] {
+        let yaml = format!("schema_version: 1\nchecks:\n  \"{name}\":\n    run: x\n");
+        let errors = Config::parse(&yaml).unwrap_err();
+        assert!(
+            errors
+                .0
+                .iter()
+                .any(|e| e.to_string().contains("check name")),
+            "{name:?}: {errors}"
+        );
+    }
+    let ok = "schema_version: 1\nchecks:\n  clean-tree_2.x:\n    run: x\n";
+    assert!(Config::parse(ok).is_ok());
+}
