@@ -84,7 +84,14 @@ returns one machine-first verdict that agents, hooks and CI branch on without re
 
 ### 2. The model: checks, triggers, scopes and cost
 
-A **check** is a command plus a parser. A **trigger** is where it runs: `commit`, `push`, `ci`,
+A **check** is a command plus a parser. It has a **kind** (`lint`, `format`, `types`, `test`,
+`build`, `records` or `other`), which its adapter supplies and the config can override, because a
+reader needs to know what a pass proves: a passing lint does not verify a claim about behaviour.
+
+Garita runs a check's command directly, with no shell, so the exit code it records is the tool's own.
+A pipeline hides a failing tool behind the exit code of its last command, and a hand-written hook
+rarely sets `pipefail`. A check that needs a shell names one in its command and takes that risk
+openly. A **trigger** is where it runs: `commit`, `push`, `ci`,
 `merge`. A **scope** is what it runs over:
 
 | Scope | Files or packages it receives | Typical trigger |
@@ -335,7 +342,7 @@ produced it.
 | `machine` | The host that ran it |
 | `tool` | Garita's name and version |
 | `result` | `PASSED`, `WARNED` or `FAILED` |
-| `checks[]` | Per check: `name`, `command`, `scope`, `tool_version`, `started_at`, `finished_at`, `duration_ms`, `exit_code`, `status`, `examined` |
+| `checks[]` | Per check: `name`, `kind`, `command`, `scope`, `tool_version`, `started_at`, `finished_at`, `duration_ms`, `exit_code`, `status`, `examined`, `output_tail`, `output` |
 | `report` | The report the run printed (§5) |
 
 A run that was `not-run` writes a receipt too, with `result` `FAILED`: a gate that could not run is
@@ -350,8 +357,11 @@ are the history that budgets and demotion read. The tree hash, and the commit wh
 fields inside. Garita keeps the last `receipts.keep` receipts and deletes older ones, except the
 last receipt in which each check ran at each trigger, which demotion reads (§4).
 
-Each check's entry records the exact command, its exit code and its times, so a receipt can be cited
-as evidence of what ran. `worktree` lets a reader tell exactly whether a check ran after the last
+Each check's entry records the exact command, the tool's own exit code and its times, so a receipt
+can be cited as evidence of what ran. `output_tail` is the last 4,000 characters of the check's
+output, and `output` is the path of the full output, kept beside the receipt and deleted with it.
+`examined` says whether the check looked at anything, so a test run that selected no tests does not
+read as a pass. `worktree` lets a reader tell exactly whether a check ran after the last
 edit: it did if the working files still hash to the receipt's `worktree`. That answer does not depend on comparing clocks, and it is the one decision-agent-kit's
 stop check needs (§9).
 

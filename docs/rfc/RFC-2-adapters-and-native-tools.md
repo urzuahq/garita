@@ -40,7 +40,7 @@ An adapter has four parts:
 
 | Part | What it does |
 |---|---|
-| `describe` | The tool's name, its system (RFC-3), the scopes it accepts and the metrics it reports |
+| `describe` | The tool's name, its system (RFC-3), the kind of check it is, the scopes it accepts and the metrics it reports |
 | `invoke` | Turns a trigger's scope into the tool's arguments and working directory |
 | `parse` | Turns the tool's output into findings, reports what it examined, and classifies the run |
 | `metrics` | The numbers a budget can limit (RFC-1 §4): duration, files examined, tests run |
