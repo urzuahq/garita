@@ -30,7 +30,8 @@ To install the latest release, with its build provenance checked by `gh`:
 
 ```sh
 tag=$(gh release view --repo urzuahq/garita --json tagName --jq .tagName)
-curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" | sh -s -- --version "$tag"
+curl -fsSL --proto '=https' --tlsv1.2 -o garita-install.sh "https://raw.githubusercontent.com/urzuahq/garita/$tag/scripts/install.sh" \
+  && sh garita-install.sh --version "$tag"
 ```
 
 [`docs/reference/install.md`](docs/reference/install.md) has the other ways to install, what the
