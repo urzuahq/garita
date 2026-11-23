@@ -175,15 +175,26 @@ fn json<T: serde::Serialize>(value: T) -> serde_json::Value {
 }
 
 fn cases() -> Vec<(&'static str, serde_json::Value)> {
+    let fail = fail_report();
     let fail_receipt = receipt(
-        ResultWord::Failed,
+        ResultWord::from(fail.status),
+        vec![
+            receipt_check("lint", CheckKind::Lint, CheckStatus::Fail, Some(1)),
+            receipt_check("types", CheckKind::Types, CheckStatus::Pass, Some(0)),
+        ],
+        fail,
+    );
+    let mixed = mixed_not_run_report();
+    let mixed_receipt = receipt(
+        ResultWord::from(mixed.status),
         vec![
             receipt_check("lint", CheckKind::Lint, CheckStatus::Fail, Some(1)),
             receipt_check("types", CheckKind::Types, CheckStatus::NotRun, None),
         ],
-        fail_report(),
+        mixed,
     );
-    let not_run_receipt = receipt(ResultWord::Failed, Vec::new(), not_run_report());
+    let not_run = not_run_report();
+    let not_run_receipt = receipt(ResultWord::from(not_run.status), Vec::new(), not_run);
     vec![
         ("gate-report.pass", json(pass_report())),
         ("gate-report.warn", json(warn_report())),
@@ -195,6 +206,7 @@ fn cases() -> Vec<(&'static str, serde_json::Value)> {
             json(no_location_report()),
         ),
         ("receipt.fail", json(fail_receipt)),
+        ("receipt.not-run-mixed", json(mixed_receipt)),
         ("receipt.not-run", json(not_run_receipt)),
     ]
 }
@@ -234,5 +246,26 @@ fn examples_match_what_the_types_serialize() {
             on_disk, produced,
             "examples/ holds files the test does not produce"
         );
+    }
+}
+
+#[test]
+fn a_receipt_and_its_report_agree_on_every_check() {
+    let statuses = |checks: &serde_json::Value| -> Vec<(String, String)> {
+        checks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["name"].to_string(), c["status"].to_string()))
+            .collect()
+    };
+    for (name, value) in cases() {
+        if name.starts_with("receipt.") {
+            assert_eq!(
+                statuses(&value["checks"]),
+                statuses(&value["report"]["checks"]),
+                "{name}"
+            );
+        }
     }
 }
