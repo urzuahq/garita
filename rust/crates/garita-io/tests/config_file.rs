@@ -27,7 +27,7 @@ fn a_missing_config_is_its_own_error() {
     init(tmp.path());
     assert!(matches!(
         config_file::load(tmp.path()),
-        Err(ConfigFileError::Missing(_))
+        Err(ConfigFileError::Missing)
     ));
 }
 

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 /// Joins a tool's cwd-relative `path` onto `cwd` (repository-relative), giving a
 /// repository-relative path with `/` separators and no `.` segments. Absolute paths are only
 /// normalised.
@@ -23,6 +25,25 @@ pub fn rebase(cwd: &str, path: &str) -> String {
         ".".to_string()
     } else {
         joined
+    }
+}
+
+/// `path` written relative to the repository `root` with `/` separators (`.` for the root
+/// itself) when it lies inside it, and as given when it does not.
+pub fn within_root(root: &Path, path: &Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(rest) => {
+            let parts: Vec<_> = rest
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect();
+            if parts.is_empty() {
+                ".".to_string()
+            } else {
+                parts.join("/")
+            }
+        }
+        Err(_) => path.display().to_string(),
     }
 }
 

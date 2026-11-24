@@ -90,12 +90,12 @@ impl Sandbox {
     }
 
     /// Compares a command's stdout with `run-report.<name>.json`, which the contract check
-    /// validates; the sandbox path and the fingerprints that hash it are normalised.
+    /// validates; the fingerprints that hash the sandbox path are normalised.
     /// `GARITA_UPDATE_GOLDEN=1` rewrites the file.
     fn golden(&self, name: &str, out: &Output) {
         let stdout = String::from_utf8(out.stdout.clone()).unwrap();
-        let text = stdout.replace(self.repo().to_str().unwrap(), "/repo");
-        let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(!stdout.contains(self.repo().to_str().unwrap()), "{stdout}");
+        let mut value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         let findings = value.get_mut("findings").and_then(|f| f.as_array_mut());
         for f in findings.into_iter().flatten() {
             if f.get("fingerprint").is_some() {
@@ -158,6 +158,25 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// Whether `text` names a path inside a test sandbox's `repo` directory.
+fn names_sandbox_repo(text: &str) -> bool {
+    text.match_indices("garita-cli-hooks-").any(|(at, _)| {
+        let rest = text.get(at..).unwrap_or_default();
+        rest.split('/')
+            .nth(1)
+            .and_then(|segment| segment.strip_prefix("repo"))
+            .is_some_and(|after| !after.starts_with(|c: char| c.is_alphanumeric() || c == '-'))
+    })
+}
+
+fn assert_no_sandbox_path(report: &Report) {
+    let error = report.error.as_deref().unwrap_or_default();
+    assert!(!names_sandbox_repo(error), "{error}");
+    for f in report.findings.iter().filter(|f| garitas_own(&f.rule)) {
+        assert!(!names_sandbox_repo(&f.message), "{}", f.message);
+    }
+}
+
 /// Whether garita wrote a finding's message itself, rather than passing on a tool's diagnostic.
 fn garitas_own(rule: &str) -> bool {
     !rule.contains('/')
@@ -192,6 +211,7 @@ fn report_of(out: &Output) -> Report {
             f.message
         );
     }
+    assert_no_sandbox_path(&report);
     assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
     for f in &report.findings {
         if let Some(check) = &f.check {
@@ -301,4 +321,56 @@ fn hooks_install_and_uninstall_reports_match_their_goldens() {
     let out = s.garita(&["hooks", "uninstall"]);
     assert_eq!(report_of(&out).status, RunStatus::Pass);
     s.golden("hooks-uninstall", &out);
+}
+
+fn messages(report: &Report) -> Vec<&str> {
+    report.findings.iter().map(|f| f.message.as_str()).collect()
+}
+
+#[test]
+fn hooks_install_names_the_hooks_relative_to_the_repository() {
+    let s = Sandbox::new(true);
+    s.lint_exits(0);
+    let report = s.install();
+    assert_eq!(
+        messages(&report),
+        [
+            "installed .git/hooks/pre-commit",
+            "installed .git/hooks/pre-push"
+        ]
+    );
+}
+
+#[test]
+fn doctor_names_a_missing_hook_relative_to_the_repository() {
+    let s = Sandbox::new(true);
+    s.lint_exits(0);
+    let out = s.garita(&["doctor"]);
+    let report = report_of(&out);
+    assert!(
+        messages(&report)
+            .contains(&".git/hooks/pre-commit does not exist; run `garita hooks install`"),
+        "{:?}",
+        messages(&report)
+    );
+}
+
+#[test]
+fn a_hooks_directory_outside_the_repository_stays_absolute() {
+    let s = Sandbox::new(true);
+    s.lint_exits(0);
+    let shared = s.0.join("shared-hooks");
+    s.git(&["config", "core.hooksPath", shared.to_str().unwrap()])
+        .assert_ok();
+    let out = s.garita(&["hooks", "install"]);
+    let report = report_of(&out);
+    assert_eq!(out.status.code(), Some(1));
+    let message = &report.findings[0].message;
+    assert!(
+        message.starts_with(&format!(
+            "{} (core.hooksPath) lies outside",
+            shared.display()
+        )),
+        "{message}"
+    );
 }

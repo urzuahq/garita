@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use garita_core::adapter::within_root;
 use garita_core::receipt::{Receipt, ReceiptNameError, file_name};
 use garita_core::report::{CheckStatus, Trigger};
 use thiserror::Error;
@@ -16,24 +17,28 @@ pub const DIR: &str = ".garita/receipts";
 #[derive(Debug, Error)]
 pub enum ReceiptsError {
     #[error("{path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
+    Io { path: String, source: io::Error },
     #[error(transparent)]
     Name(#[from] ReceiptNameError),
     #[error("could not serialize the receipt: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("{0} resolves outside the repository; garita will not write or delete there")]
-    OutsideRepository(PathBuf),
+    OutsideRepository(String),
     #[error("`{0}` cannot name a check's output file")]
     BadCheckName(String),
     #[error(transparent)]
     Git(#[from] GitError),
 }
 
-fn io_err(path: &Path) -> impl FnOnce(io::Error) -> ReceiptsError + '_ {
+fn io_err<'a>(root: &'a Path, path: &'a Path) -> impl FnOnce(io::Error) -> ReceiptsError + 'a {
     move |source| ReceiptsError::Io {
-        path: path.to_path_buf(),
+        path: within_root(root, path),
         source,
     }
+}
+
+fn outside(root: &Path, path: &Path) -> ReceiptsError {
+    ReceiptsError::OutsideRepository(within_root(root, path))
 }
 
 /// A receipt read from the store.
@@ -79,14 +84,14 @@ fn ran(receipt: &Receipt, check: &str, trigger: Trigger) -> bool {
 fn store(root: &Path, create: bool) -> Result<Option<PathBuf>, ReceiptsError> {
     let dir = root.join(DIR);
     if create {
-        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        fs::create_dir_all(&dir).map_err(io_err(root, &dir))?;
     } else if !dir.exists() {
         return Ok(None);
     }
-    let real_root = fs::canonicalize(root).map_err(io_err(root))?;
-    let real = fs::canonicalize(&dir).map_err(io_err(&dir))?;
+    let real_root = fs::canonicalize(root).map_err(io_err(root, root))?;
+    let real = fs::canonicalize(&dir).map_err(io_err(root, &dir))?;
     if !real.starts_with(&real_root) {
-        return Err(ReceiptsError::OutsideRepository(dir));
+        return Err(outside(root, &dir));
     }
     Ok(Some(real))
 }
@@ -94,12 +99,12 @@ fn store(root: &Path, create: bool) -> Result<Option<PathBuf>, ReceiptsError> {
 /// Writes the receipt atomically and returns its path relative to `root`.
 pub fn write(root: &Path, receipt: &Receipt) -> Result<String, ReceiptsError> {
     let name = file_name(&receipt.started_at, receipt.trigger, &receipt.run_id)?;
-    let dir = store(root, true)?.ok_or_else(|| ReceiptsError::OutsideRepository(root.join(DIR)))?;
+    let dir = store(root, true)?.ok_or_else(|| outside(root, &root.join(DIR)))?;
     let mut json = serde_json::to_vec_pretty(receipt)?;
     json.push(b'\n');
     let temp = dir.join(format!(".{name}.{}.tmp", ulid::Ulid::generate()));
     let target = dir.join(&name);
-    let written = write_then_rename(&temp, &target, &json);
+    let written = write_then_rename(root, &temp, &target, &json);
     if written.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -107,11 +112,16 @@ pub fn write(root: &Path, receipt: &Receipt) -> Result<String, ReceiptsError> {
     Ok(format!("{DIR}/{name}"))
 }
 
-fn write_then_rename(temp: &Path, target: &Path, bytes: &[u8]) -> Result<(), ReceiptsError> {
-    let mut file = fs::File::create_new(temp).map_err(io_err(temp))?;
-    file.write_all(bytes).map_err(io_err(temp))?;
-    file.sync_all().map_err(io_err(temp))?;
-    fs::rename(temp, target).map_err(io_err(target))
+fn write_then_rename(
+    root: &Path,
+    temp: &Path,
+    target: &Path,
+    bytes: &[u8],
+) -> Result<(), ReceiptsError> {
+    let mut file = fs::File::create_new(temp).map_err(io_err(root, temp))?;
+    file.write_all(bytes).map_err(io_err(root, temp))?;
+    file.sync_all().map_err(io_err(root, temp))?;
+    fs::rename(temp, target).map_err(io_err(root, target))
 }
 
 /// Where a check's full output goes, `<receipts>/<run id>/<check>.log`; creates the directory.
@@ -126,9 +136,9 @@ pub fn output_path(root: &Path, run_id: &str, check: &str) -> Result<PathBuf, Re
         return Err(ReceiptsError::BadCheckName(check.to_string()));
     }
     file_name("1970-01-01T00:00:00Z", Trigger::Ci, run_id)?;
-    let dir = store(root, true)?.ok_or_else(|| ReceiptsError::OutsideRepository(root.join(DIR)))?;
+    let dir = store(root, true)?.ok_or_else(|| outside(root, &root.join(DIR)))?;
     let runs = dir.join(run_id);
-    fs::create_dir_all(&runs).map_err(io_err(&runs))?;
+    fs::create_dir_all(&runs).map_err(io_err(root, &runs))?;
     Ok(runs.join(format!("{check}.log")))
 }
 
@@ -150,8 +160,8 @@ pub fn list(root: &Path) -> Result<Listing, ReceiptsError> {
     };
     let mut names = Vec::new();
     let mut listing = Listing::default();
-    for entry in fs::read_dir(&dir).map_err(io_err(&dir))? {
-        let entry = entry.map_err(io_err(&dir))?;
+    for entry in fs::read_dir(&dir).map_err(io_err(root, &dir))? {
+        let entry = entry.map_err(io_err(root, &dir))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
         let is_file = entry.file_type().is_ok_and(|t| t.is_file());
@@ -228,33 +238,33 @@ pub fn prune(root: &Path, keep: usize) -> Result<Pruned, ReceiptsError> {
             pruned.kept_for_demotion.push(stored.path.clone());
             continue;
         }
-        remove_inside(&dir, &stored.path)?;
-        remove_inside(&dir, &dir.join(&stored.run_id))?;
+        remove_inside(root, &dir, &stored.path)?;
+        remove_inside(root, &dir, &dir.join(&stored.run_id))?;
         pruned.deleted.push(stored.path.clone());
     }
     Ok(pruned)
 }
 
 /// Removes `path` only if it sits directly in `dir`; a symlink is unlinked, never followed.
-fn remove_inside(dir: &Path, path: &Path) -> Result<(), ReceiptsError> {
+fn remove_inside(root: &Path, dir: &Path, path: &Path) -> Result<(), ReceiptsError> {
     let parent_ok = path
         .parent()
         .and_then(|p| fs::canonicalize(p).ok())
         .is_some_and(|p| p == dir);
     if !parent_ok {
-        return Err(ReceiptsError::OutsideRepository(path.to_path_buf()));
+        return Err(outside(root, path));
     }
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(io_err(path)(e)),
+        Err(e) => return Err(io_err(root, path)(e)),
     };
     let removed = if meta.is_dir() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)
     };
-    removed.map_err(io_err(path))
+    removed.map_err(io_err(root, path))
 }
 
 /// Whether git ignores the receipts directory. This reports; it never edits `.gitignore`.

@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use garita_core::adapter::Adapter;
+use garita_core::adapter::{Adapter, within_root};
 use garita_core::argv::Arg;
 use garita_core::config::{Check, CheckForm, Config};
 use garita_core::glob;
@@ -91,7 +91,7 @@ fn hook_findings(root: &Path) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
         let path = dir.join(name);
-        let shown = path.display();
+        let shown = within_root(root, &path);
         let file = hooks::examine(&path, name, trigger)
             .map_err(|e| format!("could not read {shown}: {e}"))?;
         let (wants_exec, found) = match file.kind {
@@ -209,7 +209,7 @@ fn check_findings(root: &Path, check: &Check, path: Option<&OsStr>) -> Vec<Findi
                     Lookup::Found(_) => {}
                     Lookup::NotExecutable(at) => push(
                         "doctor/tool-not-executable",
-                        format!("the program `{program}` at {} is not executable", at.display()),
+                        format!("the program `{program}` at {} is not executable", within_root(root, &at)),
                     ),
                     Lookup::Missing => push(
                         "doctor/tool-missing",

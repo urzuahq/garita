@@ -5,19 +5,21 @@ use std::path::{Path, PathBuf};
 use garita_core::report::{Report, RunStatus, Severity, Trigger};
 use garita_io::hooks::{self, HOOKS, Kind};
 
-use crate::support::{Repo, assert_contract, finding, git_in, run_rules};
+use crate::support::{Repo, assert_contract, assert_relative, finding, git_in, run_rules};
 
 const CONFIG: &str = "schema_version: 1\nchecks: {}\n";
 
 fn install(dir: &Path, replace: bool) -> Report {
     let v = hooks::install(dir, replace);
     assert_contract(&v.report);
+    assert_relative(&v.report, dir);
     v.report
 }
 
 fn uninstall(dir: &Path) -> Report {
     let v = hooks::uninstall(dir);
     assert_contract(&v.report);
+    assert_relative(&v.report, dir);
     v.report
 }
 
@@ -363,5 +365,32 @@ fn uninstall_removes_garitas_hooks_and_leaves_a_foreign_one() {
     assert_eq!(
         fs::read_to_string(dir.join("pre-push")).unwrap(),
         "#!/bin/sh\nnpm test\n"
+    );
+}
+
+#[test]
+fn install_findings_name_the_hooks_relative_to_the_repository() {
+    let repo = configured();
+    let report = install(&repo.root(), false);
+    let messages: Vec<&str> = report.findings.iter().map(|f| f.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "installed .git/hooks/pre-commit",
+            "installed .git/hooks/pre-push"
+        ]
+    );
+}
+
+#[test]
+fn a_hooks_directory_outside_the_repository_is_named_in_full() {
+    let repo = configured();
+    let dir = repo.base().join("shared-hooks");
+    repo.git(&["config", "core.hooksPath", dir.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    let message = &finding(&report, "hooks-dir-shared").message;
+    assert!(
+        message.starts_with(&format!("{} (core.hooksPath)", dir.display())),
+        "{message}"
     );
 }

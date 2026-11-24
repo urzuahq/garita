@@ -21,7 +21,7 @@ pub mod turbo;
 pub use exit_code::{is_noise, is_notable, last_lines, notable, printed_nothing, sanitize};
 pub use fingerprint::fingerprint;
 pub use invoke::complete_turbo_argv;
-pub use path::rebase;
+pub use path::{rebase, within_root};
 pub use tsc::count_project_files;
 
 pub const FILES: &str = "files";

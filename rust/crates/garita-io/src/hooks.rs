@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use garita_core::adapter::within_root;
 use garita_core::report::{Examined, Finding, RunError, Severity, Trigger};
 
 use crate::config_file;
@@ -271,8 +272,11 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         Ok(true) => {}
         Ok(false) => {
             let shown = match git::hooks_path_set(&root) {
-                Ok(true) => format!("{} (core.hooksPath)", hooks.display()),
-                Ok(false) => format!("{}, where .git/hooks resolves to,", hooks.display()),
+                Ok(true) => format!("{} (core.hooksPath)", within_root(&root, &hooks)),
+                Ok(false) => format!(
+                    "{}, where .git/hooks resolves to,",
+                    within_root(&root, &hooks)
+                ),
                 Err(e) => return cannot(e.to_string()),
             };
             let (severity, message) = if replace {
@@ -301,10 +305,10 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => {
-                return cannot(format!("could not read {}: {e}", path.display()));
+                return cannot(format!("could not read {}: {e}", within_root(&root, &path)));
             }
         };
-        let step = plan(&file, name, trigger, replace);
+        let step = plan(&root, &file, name, trigger, replace);
         if matches!(&step, Step::Keep(f) if f.severity == Severity::Error) {
             refused = true;
         }
@@ -329,10 +333,13 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             } => {
                 let prior = Prior::read(&path);
                 if let Err(e) = write_hook(&hooks, &path, script(name, trigger).as_bytes(), 0o755) {
-                    let mut error = format!("could not write {}: {e}", path.display());
+                    let mut error = format!("could not write {}: {e}", within_root(&root, &path));
                     for (path, prior) in written.iter().rev() {
                         if let Err(e) = prior.restore(&hooks, path) {
-                            error.push_str(&format!("; could not restore {}: {e}", path.display()));
+                            error.push_str(&format!(
+                                "; could not restore {}: {e}",
+                                within_root(&root, path)
+                            ));
                         }
                     }
                     return cannot(error);
@@ -352,8 +359,8 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
     verdict::verdict(findings, examined_hooks(), None)
 }
 
-fn plan(file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) -> Step {
-    let shown = file.path.display().to_string();
+fn plan(root: &Path, file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) -> Step {
+    let shown = within_root(root, &file.path);
     let write = |rule: &str, message: String| Step::Write {
         name,
         trigger,
@@ -494,14 +501,14 @@ fn make_link(_: &Path, _: &Path) -> io::Result<()> {
 
 /// Removes the hooks garita wrote; any other file is left where it is.
 pub fn uninstall(dir: &Path) -> Verdict {
-    let (_, hooks) = match locate(dir) {
+    let (root, hooks) = match locate(dir) {
         Ok(found) => found,
         Err(e) => return cannot(e.to_string()),
     };
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
         let path = hooks.join(name);
-        let shown = path.display();
+        let shown = within_root(&root, &path);
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => return cannot(format!("could not read {shown}: {e}")),

@@ -11,7 +11,7 @@
       "file": null,
       "fingerprint": "0123456789abcdef",
       "line": null,
-      "message": "removed /repo/.git/hooks/pre-commit",
+      "message": "removed .git/hooks/pre-commit",
       "rule": "hook-removed",
       "severity": "info"
     },
@@ -20,7 +20,7 @@
       "file": null,
       "fingerprint": "0123456789abcdef",
       "line": null,
-      "message": "removed /repo/.git/hooks/pre-push",
+      "message": "removed .git/hooks/pre-push",
       "rule": "hook-removed",
       "severity": "info"
     }

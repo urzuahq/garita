@@ -109,7 +109,7 @@ fn finds_the_root_from_a_subdirectory() {
     let outside = TempDir::new();
     assert!(matches!(
         g::root(outside.path()),
-        Err(GitError::NotARepository(_))
+        Err(GitError::NotARepository)
     ));
 }
 

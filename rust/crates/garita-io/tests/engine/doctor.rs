@@ -8,7 +8,7 @@ use garita_core::report::{Report, RunStatus, Severity, Trigger};
 use garita_io::doctor::{self, Request};
 use garita_io::hooks;
 
-use crate::support::{Repo, assert_contract, finding, git_in, run_rules};
+use crate::support::{Repo, assert_contract, assert_relative, finding, git_in, run_rules};
 
 /// A repository where everything doctor looks at is in order: a resolvable tool, both hooks,
 /// receipts ignored, `garita` on PATH and a check at each hook's trigger.
@@ -34,6 +34,7 @@ fn doctor_at(dir: &Path, path: Option<OsString>) -> Report {
         path,
     });
     assert_contract(&v.report);
+    assert_relative(&v.report, dir);
     v.report
 }
 
@@ -557,5 +558,18 @@ fn a_defect_in_a_check_that_runs_only_in_ci_is_a_warning() {
     assert_eq!(
         finding(&report, "doctor/tool-missing").severity,
         Severity::Warning
+    );
+}
+
+#[test]
+fn doctor_names_a_missing_hook_relative_to_the_repository() {
+    let repo = Repo::new();
+    repo.config(
+        "schema_version: 1\nchecks:\n  lint:\n    run: lint {files}\n    on: [commit, push]\n",
+    );
+    let report = doctor(&repo);
+    assert_eq!(
+        finding(&report, "doctor/hook-missing").message,
+        ".git/hooks/pre-commit does not exist; run `garita hooks install`"
     );
 }

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use garita_core::adapter::within_root;
 use thiserror::Error;
 
 pub const DEFAULT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
@@ -29,6 +30,8 @@ pub struct Invocation {
     pub output: PathBuf,
     /// The most bytes of each stream held in memory; past it the head and tail are kept.
     pub memory_limit: usize,
+    /// The repository root; a path inside it is named relative to it in an error.
+    pub root: Option<PathBuf>,
 }
 
 impl Invocation {
@@ -40,6 +43,14 @@ impl Invocation {
             env: Vec::new(),
             output: output.to_path_buf(),
             memory_limit: DEFAULT_MEMORY_LIMIT,
+            root: None,
+        }
+    }
+
+    fn shown(&self, path: &Path) -> String {
+        match &self.root {
+            Some(root) => within_root(root, path),
+            None => path.display().to_string(),
         }
     }
 }
@@ -76,7 +87,7 @@ pub enum ProcessError {
     #[error("the command is empty")]
     EmptyCommand,
     #[error("could not write the output file {path}: {source}")]
-    Output { path: PathBuf, source: io::Error },
+    Output { path: String, source: io::Error },
     #[error("could not wait for `{program}`: {source}")]
     Wait { program: String, source: io::Error },
 }
@@ -89,12 +100,12 @@ pub fn run(inv: &Invocation) -> Result<Outcome, ProcessError> {
         return Ok(Outcome::CouldNotStart {
             reason: format!(
                 "could not start `{program}`: the working directory {} does not exist",
-                inv.cwd.display()
+                inv.shown(&inv.cwd)
             ),
         });
     }
     let output_err = |source| ProcessError::Output {
-        path: inv.output.clone(),
+        path: inv.shown(&inv.output),
         source,
     };
     let file = Arc::new(Mutex::new(File::create(&inv.output).map_err(output_err)?));

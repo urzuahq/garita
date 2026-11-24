@@ -12,12 +12,13 @@ pub enum Pick<'a> {
     Run(&'a Check),
     /// Skipped before it ran, with the finding that says why.
     Skip(&'a Check, Finding),
-    /// Cannot run: an unknown name, or a form this version does not support.
+    /// A check in the config whose form this version does not support.
     NotRun {
-        name: String,
-        check: Option<&'a Check>,
+        check: &'a Check,
         reason: RunError,
     },
+    /// A name on the command line that is not a check; it gets no entry in the report.
+    Unknown(String),
 }
 
 /// The checks named on the command line, else those whose `on` has the trigger, less the demoted.
@@ -38,11 +39,7 @@ pub fn select<'a>(
             })
             .map(|name| match config.check(name) {
                 Some(check) => supported(check),
-                None => Pick::NotRun {
-                    name: name.clone(),
-                    check: None,
-                    reason: RunError::usage(format!("`{name}` is not a check in the config")),
-                },
+                None => Pick::Unknown(name.clone()),
             })
             .collect();
     }
@@ -64,8 +61,7 @@ fn supported(check: &Check) -> Pick<'_> {
         CheckForm::Builtin { builtin } => format!("`builtin: {}`", builtin.as_str()),
     };
     Pick::NotRun {
-        name: check.name.clone(),
-        check: Some(check),
+        check,
         reason: RunError::config(format!(
             "checks.{}: the {form} form is not supported by this version of garita",
             check.name

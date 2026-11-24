@@ -238,19 +238,79 @@ fn native_and_builtin_checks_are_not_run_by_this_version() {
 }
 
 #[test]
-fn an_unknown_named_check_is_not_run() {
+fn a_name_that_is_not_a_check_gets_no_entry_and_no_output_file() {
     let repo = exit_tool_repo(&[("ok", "exit 0")]);
-    let out = repo.run_named(Trigger::Commit, &["ok", "nope"]);
+    let out = repo.run_named(Trigger::Commit, &["ok", "nope", "nada"]);
+    assert_eq!(out.report.status, RunStatus::NotRun);
+    assert_eq!(out.report.checks.len(), 1);
     assert_eq!(check(&out.report, "ok").status, CheckStatus::Pass);
-    assert_eq!(check(&out.report, "nope").status, CheckStatus::NotRun);
-    assert!(
-        out.report
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("`nope` is not a check")
+    assert_eq!(
+        out.report.error.as_deref(),
+        Some("`nope`, `nada` are not checks in the config")
     );
     assert_eq!(out.exit_code(), 2);
+    let id = out.report.receipt.as_deref().unwrap();
+    let logs = repo.root().join(".garita/receipts");
+    let written: Vec<_> = std::fs::read_dir(&logs)
+        .unwrap()
+        .flatten()
+        .flat_map(|d| std::fs::read_dir(d.path()).into_iter().flatten().flatten())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        written.iter().all(|n| !n.starts_with("nope")),
+        "{id}: {written:?}"
+    );
+}
+
+#[test]
+fn only_unknown_names_leave_checks_empty_and_the_report_a_usage_error() {
+    let repo = exit_tool_repo(&[("ok", "exit 0")]);
+    let out = repo.run_named(Trigger::Commit, &["nope"]);
+    assert!(out.report.checks.is_empty());
+    let value = serde_json::to_value(&out.report).unwrap();
+    assert_eq!(value["status"], "not-run");
+    assert_eq!(value["error_kind"], "usage");
+    assert_eq!(value["error"], "`nope` is not a check in the config");
+    assert_eq!(value["next_action"], "garita describe");
+}
+
+#[test]
+fn a_bad_config_is_named_relative_to_the_repository() {
+    let repo = Repo::new();
+    repo.config("schema_version: 1\nchecks: 3\n");
+    let out = repo.run();
+    let error = out.report.error.as_deref().unwrap();
+    assert!(
+        error.starts_with(".garita/config.yaml is not a valid config: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_missing_config_is_named_relative_to_the_repository() {
+    let repo = Repo::new();
+    let out = repo.run();
+    assert_eq!(
+        out.report.error.as_deref(),
+        Some(".garita/config.yaml does not exist")
+    );
+}
+
+#[test]
+fn outside_a_repository_the_current_directory_is_named_without_its_path() {
+    let repo = Repo::new();
+    let dir = repo.base().join("elsewhere");
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = garita_io::engine::run(
+        &garita_io::engine::Request::new(dir.clone(), "0.1.0", Trigger::Commit),
+        &garita_io::engine::SystemClock,
+    );
+    assert_eq!(
+        out.report.error.as_deref(),
+        Some("the current directory is not inside a git repository")
+    );
+    crate::support::assert_relative(&out.report, repo.base());
 }
 
 #[test]
