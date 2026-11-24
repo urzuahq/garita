@@ -8,7 +8,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 contract="$root/rust/crates/garita-core/tests/contract"
 garita="$(realpath "${1:-$root/rust/target/debug/garita}")"
-kit="${2:-}"
+kit="${2:+$(realpath "$2")}"
 
 if [ ! -x "$garita" ]; then
   echo "conform.sh: no garita binary at $garita; build it with cargo build first" >&2
@@ -37,9 +37,13 @@ ln -s "$garita" "$work/bin/garita"
 export PATH="$work/bin:$PATH"
 git -C "$repo" init -q -b main
 printf '.garita/receipts/\n' > "$repo/.gitignore"
-printf 'schema_version: 1\nchecks:\n  noop:\n    run: true\n    parser: exit-code\n    on: [commit, push, ci]\n' \
+printf 'schema_version: 1\nchecks:\n  noop:\n    run: "true"\n    parser: exit-code\n    on: [commit, push, ci]\n' \
   > "$repo/.garita/config.yaml"
 (cd "$repo" && garita hooks install > /dev/null)
+if ! (cd "$repo" && garita doctor) | grep -q '"status":"pass"'; then
+  echo "conform.sh: garita doctor does not pass in the fixture repository, so the runner would test a not-run" >&2
+  exit 2
+fi
 
 cd "$repo"
 python3 -I "$kit/scripts/conform.py" "$work/bin/garita" --schemas "$contract"

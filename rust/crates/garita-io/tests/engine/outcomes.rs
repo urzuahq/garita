@@ -254,6 +254,22 @@ fn an_unknown_named_check_is_not_run() {
 }
 
 #[test]
+fn a_mistyped_name_beside_an_unsupported_check_is_a_usage_error() {
+    let repo = Repo::new();
+    repo.config("schema_version: 1\nchecks:\n  c:\n    native: urzua\n");
+    let out = repo.run_named(Trigger::Commit, &["c", "nope"]);
+    let value = serde_json::to_value(&out.report).unwrap();
+    assert_eq!(value["error_kind"], "usage");
+    assert_eq!(value["next_action"], "garita describe");
+    let error = out.report.error.as_deref().unwrap();
+    assert!(
+        error.contains("not supported by this version") && error.contains("`nope` is not a check"),
+        "{error}"
+    );
+    assert!(!error.contains('\n'));
+}
+
+#[test]
 fn an_unsatisfied_requires_is_not_run_with_a_receipt() {
     let repo = Repo::new();
     repo.config("schema_version: 1\nrequires: '>=9.0.0'\nchecks:\n  a:\n    run: x\n");

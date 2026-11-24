@@ -252,11 +252,7 @@ impl<'a> Session<'a> {
         findings.extend(results.iter().flat_map(|r| r.findings.iter().cloned()));
         findings.extend(self.trigger_budget());
         let reasons: Vec<&RunError> = results.iter().filter_map(|r| r.not_run.as_ref()).collect();
-        let error = error.or_else(|| {
-            let first = reasons.first()?;
-            let messages: Vec<&str> = reasons.iter().map(|e| e.message.as_str()).collect();
-            Some(RunError::new(first.kind, messages.join("; ")))
-        });
+        let error = error.or_else(|| RunError::combine(&reasons));
         let trigger = self.request.trigger;
         let started_at = crate::clock::rfc3339(self.started);
         let receipt_path = file_name(&started_at, trigger, &self.run_id)

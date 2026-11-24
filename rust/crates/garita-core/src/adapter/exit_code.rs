@@ -43,8 +43,8 @@ pub fn last_lines(text: &str) -> Vec<String> {
     let mut lines: Vec<String> = text
         .lines()
         .rev()
-        .map(|l| clip(l.trim_end()))
-        .filter(|l| !l.trim().is_empty())
+        .map(|l| clip(l.trim()))
+        .filter(|l| !l.is_empty())
         .take(LAST_LINES)
         .map(sanitize)
         .collect();
@@ -60,7 +60,7 @@ pub fn notable(stderr: &str, stdout: &str) -> Vec<String> {
         if found.len() == NOTABLE_LINES {
             break;
         }
-        let line = sanitize(clip(line.trim_end()));
+        let line = sanitize(clip(line.trim()));
         if is_notable(&line) && !found.contains(&line) {
             found.push(line);
         }
@@ -319,6 +319,12 @@ mod tests {
         let got = last_lines(&text);
         assert_eq!(got.len(), 10);
         assert_eq!((got[0].as_str(), got[9].as_str()), ("line 21", "line 30"));
+    }
+
+    #[test]
+    fn a_line_indented_past_the_cap_keeps_its_text() {
+        let text = format!("first\n{}boom\n", " ".repeat(crate::adapter::LINE_CAP + 1));
+        assert_eq!(last_lines(&text), ["first", "boom"]);
     }
 
     #[test]

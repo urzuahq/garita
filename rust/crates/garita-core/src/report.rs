@@ -34,6 +34,19 @@ pub enum ErrorKind {
     Internal,
 }
 
+impl ErrorKind {
+    /// Which kind names a run that failed for several reasons: the lowest rank wins, because
+    /// what the caller typed is the cheapest thing to repair first.
+    pub const fn precedence(self) -> u8 {
+        match self {
+            Self::Usage => 0,
+            Self::Config => 1,
+            Self::Environment => 2,
+            Self::Internal => 3,
+        }
+    }
+}
+
 /// The `error` and `error_kind` of a `not-run` report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunError {
@@ -54,6 +67,17 @@ impl RunError {
             kind,
             message: lines.join("; "),
         }
+    }
+
+    /// One error for several reasons: the kind of the highest-precedence reason, the messages
+    /// of all of them in order; `None` when there is no reason.
+    pub fn combine(reasons: &[&Self]) -> Option<Self> {
+        let kind = reasons
+            .iter()
+            .map(|r| r.kind)
+            .min_by_key(|k| k.precedence())?;
+        let messages: Vec<&str> = reasons.iter().map(|r| r.message.as_str()).collect();
+        Some(Self::new(kind, messages.join("; ")))
     }
 
     pub fn usage(message: impl Into<String>) -> Self {
@@ -642,6 +666,31 @@ pub fn rerun_argv(trigger: Option<Trigger>, checks: &[&str], files: &[&str]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_aggregate_error_kind_follows_the_precedence_for_every_pair() {
+        let kinds = [
+            ErrorKind::Usage,
+            ErrorKind::Config,
+            ErrorKind::Environment,
+            ErrorKind::Internal,
+        ];
+        for (i, a) in kinds.iter().enumerate() {
+            for (j, b) in kinds.iter().enumerate() {
+                let (first, second) = (RunError::new(*a, "a"), RunError::new(*b, "b"));
+                let want = kinds[i.min(j)];
+                for reasons in [[&first, &second], [&second, &first]] {
+                    let got = RunError::combine(&reasons).unwrap();
+                    assert_eq!(got.kind, want, "{a:?} with {b:?}");
+                }
+                assert_eq!(
+                    RunError::combine(&[&first, &second]).unwrap().message,
+                    "a; b"
+                );
+            }
+        }
+        assert_eq!(RunError::combine(&[]), None);
+    }
 
     const RFC_EXAMPLE: &str = r#"{
       "schema_version": 1,

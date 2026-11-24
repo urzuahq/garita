@@ -248,7 +248,7 @@ fn a_turbo_usage_error_says_what_turbo_printed() {
     assert!(tail.contains("Usage: turbo run"), "{tail}");
     assert_eq!(
         lint.output_notable,
-        [" ERROR  unexpected argument '--bogus' found"]
+        ["ERROR  unexpected argument '--bogus' found"]
     );
 }
 
