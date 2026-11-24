@@ -63,10 +63,7 @@ pub fn plan<'a>(
         Ok(planned) => planned,
         Err(reason) => Planned::NotRun {
             check,
-            reason: RunError::new(
-                reason.kind,
-                format!("checks.{}: {}", check.name, reason.message),
-            ),
+            reason: reason.with_message(format!("checks.{}: {}", check.name, reason.message)),
         },
     }
 }
@@ -368,8 +365,8 @@ mod tests {
         else {
             panic!("both checks should be not run");
         };
-        assert_eq!(git.kind, garita_core::report::ErrorKind::Environment);
+        assert_eq!(git.kinds, [garita_core::report::ErrorKind::Environment]);
         assert!(git.message.starts_with("checks.a: "), "{}", git.message);
-        assert_eq!(cwd.kind, garita_core::report::ErrorKind::Config);
+        assert_eq!(cwd.kinds, [garita_core::report::ErrorKind::Config]);
     }
 }

@@ -3,7 +3,9 @@
   "checks": [],
   "commit": null,
   "error": "unexpected argument '--bogus' found",
-  "error_kind": "usage",
+  "error_kinds": [
+    "usage"
+  ],
   "examined": {},
   "findings": [],
   "next_action": "garita describe",

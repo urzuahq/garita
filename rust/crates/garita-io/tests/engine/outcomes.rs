@@ -270,7 +270,7 @@ fn only_unknown_names_leave_checks_empty_and_the_report_a_usage_error() {
     assert!(out.report.checks.is_empty());
     let value = serde_json::to_value(&out.report).unwrap();
     assert_eq!(value["status"], "not-run");
-    assert_eq!(value["error_kind"], "usage");
+    assert_eq!(value["error_kinds"], serde_json::json!(["usage"]));
     assert_eq!(value["error"], "`nope` is not a check in the config");
     assert_eq!(value["next_action"], "garita describe");
 }
@@ -314,12 +314,12 @@ fn outside_a_repository_the_current_directory_is_named_without_its_path() {
 }
 
 #[test]
-fn a_mistyped_name_beside_an_unsupported_check_is_a_usage_error() {
+fn a_mistyped_name_beside_an_unsupported_check_is_a_usage_and_config_error() {
     let repo = Repo::new();
     repo.config("schema_version: 1\nchecks:\n  c:\n    native: urzua\n");
     let out = repo.run_named(Trigger::Commit, &["c", "nope"]);
     let value = serde_json::to_value(&out.report).unwrap();
-    assert_eq!(value["error_kind"], "usage");
+    assert_eq!(value["error_kinds"], serde_json::json!(["usage", "config"]));
     assert_eq!(value["next_action"], "garita describe");
     let error = out.report.error.as_deref().unwrap();
     assert!(

@@ -3,7 +3,9 @@
   "checks": [],
   "commit": null,
   "error": "not a git repository",
-  "error_kind": "environment",
+  "error_kinds": [
+    "environment"
+  ],
   "examined": {},
   "findings": [],
   "next_action": "garita doctor",

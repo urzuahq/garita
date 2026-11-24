@@ -93,7 +93,7 @@ pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResul
         match &run.outcome {
             Err(error) => {
                 let message = format!("checks.{}: {}", plan.check.name, error.message);
-                tally.not_run = Some(RunError::new(error.kind, message));
+                tally.not_run = Some(error.with_message(message));
             }
             Ok(Outcome::CouldNotStart { reason }) => {
                 let message = format!("checks.{}: {reason}", plan.check.name);
