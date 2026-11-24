@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use garita_core::report::{Report, RunStatus};
+use garita_core::report::{Report, RunStatus, Trigger};
+use garita_io::hooks;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -95,7 +96,8 @@ impl Sandbox {
         let stdout = String::from_utf8(out.stdout.clone()).unwrap();
         let text = stdout.replace(self.repo().to_str().unwrap(), "/repo");
         let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
-        for f in value["findings"].as_array_mut().unwrap() {
+        let findings = value.get_mut("findings").and_then(|f| f.as_array_mut());
+        for f in findings.into_iter().flatten() {
             if f.get("fingerprint").is_some() {
                 f["fingerprint"] = "0123456789abcdef".into();
             }
@@ -156,6 +158,15 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// Whether garita wrote a finding's message itself, rather than passing on a tool's diagnostic.
+fn garitas_own(rule: &str) -> bool {
+    !rule.contains('/')
+        || rule.starts_with("doctor/")
+        || ["/unrecognized-output", "/failed", "/task-failed"]
+            .iter()
+            .any(|s| rule.ends_with(s))
+}
+
 fn report_of(out: &Output) -> Report {
     let stdout = String::from_utf8(out.stdout.clone()).unwrap();
     assert_eq!(stdout.matches('\n').count(), 1, "{stdout:?}");
@@ -168,6 +179,18 @@ fn report_of(out: &Output) -> Report {
     );
     if report.status == RunStatus::NotRun {
         assert!(report.error.is_some());
+    }
+    assert!(
+        !report.error.as_deref().unwrap_or_default().contains('\n'),
+        "{:?}",
+        report.error
+    );
+    for f in &report.findings {
+        assert!(
+            !garitas_own(&f.rule) || !f.message.contains('\n'),
+            "{}",
+            f.message
+        );
     }
     assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
     for f in &report.findings {
@@ -194,7 +217,7 @@ fn the_installed_pre_commit_hook_rejects_a_failing_commit_and_accepts_a_passing_
 }
 
 #[test]
-fn without_garita_on_path_the_hook_rejects_the_commit_with_a_message() {
+fn without_garita_on_path_the_hook_prints_a_not_run_report_and_blocks_the_commit() {
     let s = Sandbox::new(false);
     s.lint_exits(0);
     let out = Command::new(env!("CARGO_BIN_EXE_garita"))
@@ -203,13 +226,26 @@ fn without_garita_on_path_the_hook_rejects_the_commit_with_a_message() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut cmd = Command::new(s.repo().join(".git/hooks/pre-commit"));
+    s.env(&mut cmd);
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(stderr(&out), "");
+    let expected = format!(
+        "{}\n",
+        hooks::missing_garita_report("pre-commit", Trigger::Commit)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{\"status\":\"not-run\",\"error\":\"garita is not on PATH, so the pre-commit hook \
+         cannot run it and blocks this commit\",\"error_kind\":\"environment\",\
+         \"next_action\":null,\"next_action_reason\":null,\"next_action_argv\":null,\
+         \"next_action_inputs\":[]}\n"
+    );
+    s.golden("hook-missing-garita", &out);
     let out = s.commit("a.ts");
     assert!(!out.status.success());
-    assert!(
-        stderr(&out).contains("which is not on PATH"),
-        "{}",
-        stderr(&out)
-    );
     assert_eq!(s.commits(), 0);
 }
 

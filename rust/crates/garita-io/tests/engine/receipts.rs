@@ -3,7 +3,7 @@ use std::fs;
 use garita_core::receipt::{Receipt, ResultWord};
 use garita_core::report::{Report, Severity, Trigger};
 
-use crate::support::{Repo, finding};
+use crate::support::{Repo, check, finding};
 
 fn two_check_repo() -> Repo {
     let repo = Repo::new();
@@ -101,6 +101,70 @@ fn a_receipt_that_cannot_be_written_leaves_the_verdict_standing() {
     );
     assert_eq!(out.exit_code(), 1);
     assert_eq!(out.report.status, garita_core::report::RunStatus::Fail);
+}
+
+fn single_check_repo(script: &str) -> Repo {
+    let repo = Repo::new();
+    let tool = repo.tool("noisy", script);
+    repo.write("a.ts", "a\n");
+    repo.stage(&["a.ts"]);
+    repo.config(&format!(
+        "schema_version: 1\nchecks:\n  noisy:\n    run: {tool}\n"
+    ));
+    repo
+}
+
+fn is_root() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .is_ok_and(|o| o.stdout.starts_with(b"0"))
+}
+
+#[test]
+fn output_tail_and_notable_lines_carry_no_control_characters() {
+    let repo = single_check_repo(
+        "printf 'esc\\033]0;title\\007 \\033[31mred\\033[0m nul:\\000 cr:\\r bell error: bad\\n'; exit 1",
+    );
+    let out = repo.run();
+    let entry = check(&out.report, "noisy");
+    let tail = entry.output_tail.as_deref().unwrap();
+    assert!(tail.contains("red"), "{tail:?}");
+    let bad = |c: char| c.is_control() && c != '\n' && c != '\t';
+    assert!(!tail.chars().any(bad), "{tail:?}");
+    assert!(!entry.output_notable.iter().any(|l| l.chars().any(bad)));
+    assert!(!entry.output_notable.is_empty());
+    let receipt = repo.receipt_of(&out.report);
+    let in_receipt = receipt.checks.iter().find(|c| c.name == "noisy").unwrap();
+    assert_eq!(in_receipt.output_tail, tail);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unwritable_receipts_directory_still_yields_the_tail() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let repo = single_check_repo("echo boom-detail; exit 1");
+    let dir = repo.root().join(".garita/receipts");
+    fs::create_dir_all(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = repo.run();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let entry = check(&out.report, "noisy");
+    assert!(
+        entry
+            .output_tail
+            .as_deref()
+            .is_some_and(|t| t.contains("boom-detail")),
+        "{:?}",
+        entry.output_tail
+    );
+    assert_eq!(entry.output, None);
+    assert_eq!(out.exit_code(), 1);
+    assert_eq!(out.report.status, garita_core::report::RunStatus::Fail);
+    finding(&out.report, "receipt-unwritten");
 }
 
 #[test]

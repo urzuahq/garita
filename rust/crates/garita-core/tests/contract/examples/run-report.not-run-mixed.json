@@ -8,6 +8,7 @@
       },
       "kind": "lint",
       "name": "lint",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/lint.log",
       "rerun": "garita run lint",
       "status": "fail"
     },
@@ -18,12 +19,14 @@
       },
       "kind": "types",
       "name": "types",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/types.log",
       "rerun": null,
       "status": "not-run"
     }
   ],
   "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
   "error": "could not run: types",
+  "error_kind": "environment",
   "examined": {
     "files": 38
   },
@@ -40,6 +43,10 @@
     }
   ],
   "next_action": "garita doctor",
+  "next_action_argv": [
+    "garita",
+    "doctor"
+  ],
   "next_action_inputs": [],
   "next_action_reason": "1 check could not run",
   "receipt": null,

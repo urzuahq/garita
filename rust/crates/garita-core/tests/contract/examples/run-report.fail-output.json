@@ -1,0 +1,89 @@
+{
+  "blocking": true,
+  "checks": [
+    {
+      "duration_ms": 412,
+      "examined": {
+        "files": 3
+      },
+      "kind": "records",
+      "name": "records",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/records.log",
+      "output_notable": [
+        "error: 0004-x.md has no status"
+      ],
+      "output_tail": "checked 3 records\nerror: 0004-x.md has no status\n",
+      "rerun": "garita run records",
+      "status": "fail"
+    },
+    {
+      "duration_ms": 412,
+      "examined": {
+        "files": 38
+      },
+      "kind": "format",
+      "name": "format",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/format.log",
+      "output_tail": "src/[id]/page.tsx\n",
+      "rerun": "garita run format",
+      "status": "fail"
+    }
+  ],
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "examined": {
+    "files": 41
+  },
+  "findings": [
+    {
+      "check": "records",
+      "column": null,
+      "file": null,
+      "fingerprint": "31ab5490d29833a3",
+      "line": null,
+      "message": "exited with code 1",
+      "rule": "exit-code/failed",
+      "severity": "error"
+    },
+    {
+      "check": "format",
+      "column": null,
+      "file": "src/[id]/page.tsx",
+      "fingerprint": "dd4eb8422103ddbb",
+      "fix": "oxfmt 'src/[id]/page.tsx'",
+      "fix_argv": [
+        "oxfmt",
+        "src/[id]/page.tsx"
+      ],
+      "line": null,
+      "message": "File is not formatted",
+      "rule": "oxfmt/unformatted",
+      "severity": "error"
+    }
+  ],
+  "next_action": "garita run --trigger push records format",
+  "next_action_argv": [
+    "garita",
+    "run",
+    "--trigger",
+    "push",
+    "records",
+    "format"
+  ],
+  "next_action_inputs": [],
+  "next_action_reason": "2 errors in 2 checks",
+  "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",
+  "schema_version": 1,
+  "scope": {
+    "files": [
+      "src/app.ts",
+      "src/util.ts"
+    ],
+    "kind": "affected",
+    "packages": [
+      "frontend"
+    ]
+  },
+  "status": "fail",
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+  "trigger": "push"
+}

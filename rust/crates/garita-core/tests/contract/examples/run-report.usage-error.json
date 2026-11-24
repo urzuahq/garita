@@ -1,0 +1,22 @@
+{
+  "blocking": false,
+  "checks": [],
+  "commit": null,
+  "error": "unexpected argument '--bogus' found",
+  "error_kind": "usage",
+  "examined": {},
+  "findings": [],
+  "next_action": "garita describe",
+  "next_action_argv": [
+    "garita",
+    "describe"
+  ],
+  "next_action_inputs": [],
+  "next_action_reason": "the arguments were wrong; describe lists the ones each command takes",
+  "receipt": null,
+  "schema_version": 1,
+  "scope": null,
+  "status": "not-run",
+  "tree": null,
+  "trigger": null
+}

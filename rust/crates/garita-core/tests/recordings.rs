@@ -276,7 +276,11 @@ fn oxlint_recorded_finding_in_full() {
     assert_eq!(finding.severity, garita_core::report::Severity::Error);
     assert_eq!(finding.message, DEBUGGER);
     assert_eq!(
-        finding.fix.as_deref(),
+        finding
+            .fix
+            .as_deref()
+            .map(garita_core::argv::join)
+            .as_deref(),
         Some("oxlint --fix packages/app/src/lint-error.ts")
     );
     let invalid = recording(OXLINT, "invalid-config-json");
@@ -287,12 +291,14 @@ fn oxlint_recorded_finding_in_full() {
     };
     let parsed = Adapter::Oxlint.parse(&output, &context);
     assert_eq!(parsed.outcome, Outcome::Findings, "a bad config must block");
-    let message = &parsed.findings[0].message;
+    assert_eq!(
+        parsed.findings[0].message,
+        "oxlint exited with code 1 with output garita does not recognise"
+    );
+    let notable = parsed.notable.join("\n");
     assert!(
-        message.starts_with("oxlint exited with code 1")
-            && message.contains("Failed to parse oxlint configuration file.")
-            && message.contains("EOF while parsing a value"),
-        "{message}"
+        notable.contains("Failed to parse oxlint configuration file."),
+        "{notable}"
     );
 }
 
@@ -375,7 +381,11 @@ fn oxfmt_list_mode_takes_the_passed_count() {
     let parsed = Adapter::Oxfmt.parse(&output, &context);
     assert_eq!(parsed.examined.get(FILES), Some(&7));
     assert_eq!(
-        parsed.findings[0].fix.as_deref(),
+        parsed.findings[0]
+            .fix
+            .as_deref()
+            .map(garita_core::argv::join)
+            .as_deref(),
         Some("oxfmt packages/app/src/format-bad.ts")
     );
 }

@@ -146,9 +146,34 @@ jobs:
           ref: ${{ inputs.ref }}
       - run: scripts/contract-check.sh --release
 
+  conform:
+    name: conform (the kit's conformance runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
+        working-directory: rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+          shared-key: build
+          save-if: false
+      - name: cargo build
+        working-directory: rust
+        run: cargo build -p garita-cli --locked
+      - name: run the runner at the kit commit in tests/contract/VERSION
+        run: scripts/conform.sh rust/target/debug/garita
+
   result:
     name: result
-    needs: [lint, build, test, contract]
+    needs: [lint, build, test, contract, conform]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

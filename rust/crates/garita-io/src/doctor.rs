@@ -7,7 +7,7 @@ use garita_core::adapter::Adapter;
 use garita_core::argv::Arg;
 use garita_core::config::{Check, CheckForm, Config};
 use garita_core::glob;
-use garita_core::report::{Examined, Finding, ScopeKind, Severity};
+use garita_core::report::{Examined, Finding, NextAction, RunError, ScopeKind, Severity};
 
 use crate::config_file;
 use crate::engine::scope::base_unresolved;
@@ -34,20 +34,20 @@ pub struct Request {
 pub fn doctor(request: &Request) -> Verdict {
     let root = match git::root(&request.dir) {
         Ok(root) => root,
-        Err(e) => return not_run(e.to_string()),
+        Err(e) => return not_run(RunError::environment(e.to_string())),
     };
     let loaded = match config_file::load(&root) {
         Ok(loaded) => loaded,
-        Err(e) => return not_run(e.to_string()),
+        Err(e) => return not_run(RunError::config(e.to_string())),
     };
     let config = &loaded.config;
     if let Some(error) = requires_error(config, &request.version) {
-        return not_run(error);
+        return not_run(RunError::config(error));
     }
     let path = request.path.as_deref();
     let mut findings = match hook_findings(&root) {
         Ok(findings) => findings,
-        Err(e) => return not_run(e),
+        Err(e) => return not_run(RunError::environment(e)),
     };
     if find_program("garita", &root, path).is_none() {
         let message = "garita is not on PATH, and every hook calls it by name, so each would fail"
@@ -63,7 +63,7 @@ pub fn doctor(request: &Request) -> Verdict {
     }
     match repository_findings(&root, config) {
         Ok(more) => findings.extend(more),
-        Err(e) => return not_run(e),
+        Err(e) => return not_run(RunError::environment(e)),
     }
     let examined = Examined::from([
         (
@@ -80,10 +80,9 @@ pub fn doctor(request: &Request) -> Verdict {
 }
 
 /// A doctor that cannot look has nothing to suggest but the error itself.
-fn not_run(error: String) -> Verdict {
+fn not_run(error: RunError) -> Verdict {
     let mut v = verdict::not_run(error);
-    v.report.next_action = None;
-    v.report.next_action_reason = None;
+    v.report.set_next(NextAction::NONE);
     v
 }
 
@@ -329,18 +328,18 @@ fn repository_findings(root: &Path, config: &Config) -> Result<Vec<Finding>, Str
     Ok(findings)
 }
 
-/// The command that fixes the first error, else the first warning, when one does.
+/// The command that fixes the first error, else the first warning, when one command does. A
+/// missing `.gitignore` line has none: appending it takes a shell redirection, not one process.
 fn next_action(findings: &[Finding]) -> Next {
     let first = findings
         .iter()
         .find(|f| f.severity == Severity::Error)
         .or_else(|| findings.iter().find(|f| f.severity == Severity::Warning))?;
-    let action = match first.rule.as_str() {
+    match first.rule.as_str() {
         "doctor/hook-missing" | "doctor/hook-outdated" | "doctor/hook-not-executable" => {
-            INSTALL.to_string()
+            let argv = INSTALL.split(' ').map(str::to_string).collect();
+            Some((argv, first.message.clone()))
         }
-        "doctor/receipts-not-ignored" => format!("echo '{RECEIPTS_LINE}' >> .gitignore"),
-        _ => return None,
-    };
-    Some((action, first.message.clone()))
+        _ => None,
+    }
 }

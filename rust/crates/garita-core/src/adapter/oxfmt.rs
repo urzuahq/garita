@@ -98,7 +98,7 @@ fn findings(listed: &[&str], cwd: &str) -> Vec<ToolFinding> {
             ToolFinding {
                 severity: Severity::Error,
                 rule: "oxfmt/unformatted".to_string(),
-                fix: Some(format!("oxfmt {}", path_arg(&file))),
+                fix: Some(vec!["oxfmt".to_string(), path_arg(&file)]),
                 file: Some(file),
                 line: None,
                 column: None,

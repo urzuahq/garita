@@ -178,6 +178,34 @@ fn garitas_hook_with_a_line_appended_is_modified_not_garitas() {
 }
 
 #[test]
+fn a_format_1_hook_is_outdated_and_its_next_action_installs() {
+    let repo = healthy();
+    let path = hook(&repo, "pre-push");
+    let text = fs::read_to_string(&path).unwrap();
+    let old = text
+        .replace("format 2:", "format 1:")
+        .replace(
+            &format!(
+                "printf '%s\\n' '{}'",
+                garita_io::hooks::missing_garita_report("pre-push", Trigger::Push)
+            ),
+            "echo \"garita: the pre-push hook needs garita, which is not on PATH; this push is blocked\" >&2",
+        );
+    fs::write(&path, old).unwrap();
+    let report = doctor(&repo);
+    assert!(has(&report, "doctor/hook-outdated"));
+    assert_eq!(report.next_action.as_deref(), Some("garita hooks install"));
+    assert_eq!(
+        report.next_action_argv,
+        Some(vec![
+            "garita".to_string(),
+            "hooks".to_string(),
+            "install".to_string()
+        ])
+    );
+}
+
+#[test]
 fn a_current_hook_is_not_outdated() {
     assert!(!has(&doctor(&healthy()), "doctor/hook-outdated"));
 }
@@ -372,10 +400,8 @@ fn receipts_not_ignored_is_a_warning_with_the_line_to_add() {
     let f = finding(&report, "doctor/receipts-not-ignored");
     assert_eq!(f.severity, Severity::Warning);
     assert!(f.message.contains("`.garita/receipts/`"), "{}", f.message);
-    assert_eq!(
-        report.next_action.as_deref(),
-        Some("echo '.garita/receipts/' >> .gitignore")
-    );
+    assert_eq!(report.next_action, None);
+    assert_eq!(report.next_action_argv, None);
     assert!(!has(&doctor(&healthy()), "doctor/receipts-not-ignored"));
 }
 

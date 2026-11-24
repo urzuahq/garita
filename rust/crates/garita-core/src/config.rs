@@ -57,7 +57,7 @@ pub struct ConfigErrors(pub Vec<ConfigError>);
 impl fmt::Display for ConfigErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lines: Vec<String> = self.0.iter().map(ToString::to_string).collect();
-        f.write_str(&lines.join("\n"))
+        f.write_str(&lines.join("; "))
     }
 }
 

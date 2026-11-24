@@ -218,10 +218,13 @@ fn another_tool_failing_through_turbo_is_named_for_its_task() {
         "{}",
         docs.message
     );
+    let notable = &check(&out.report, "lint").output_notable;
     assert!(
-        docs.message.contains("MD013 line too long"),
-        "{}",
-        docs.message
+        notable
+            .iter()
+            .any(|l| l.starts_with("@fixture/docs#lint:check: ")
+                && l.contains("MD013 line too long")),
+        "{notable:?}"
     );
     assert_eq!(out.exit_code(), 1);
 }
@@ -235,12 +238,18 @@ fn a_turbo_usage_error_says_what_turbo_printed() {
     let out = repo.run();
     let f = finding(&out.report, "turbo/unrecognized-output");
     assert!(f.message.contains("no run summary"), "{}", f.message);
+    assert!(!f.message.contains('\n'), "{}", f.message);
+    let lint = check(&out.report, "lint");
+    let tail = lint.output_tail.as_deref().unwrap_or_default();
     assert!(
-        f.message.contains("unexpected argument '--bogus' found"),
-        "{}",
-        f.message
+        tail.contains("unexpected argument '--bogus' found"),
+        "{tail}"
     );
-    assert!(f.message.contains("Usage: turbo run"), "{}", f.message);
+    assert!(tail.contains("Usage: turbo run"), "{tail}");
+    assert_eq!(
+        lint.output_notable,
+        ["ERROR  unexpected argument '--bogus' found"]
+    );
 }
 
 /// A turbo summary with one task per `(package, exit)` pair, and each task's log.
@@ -293,12 +302,11 @@ fn exit_code_through_turbo_names_each_failing_task() {
         .collect();
     assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
     assert_eq!(errors[0].file, None);
-    assert!(
-        errors[0].message.starts_with("b#test: exited with code 1:"),
-        "{}",
-        errors[0].message
+    assert_eq!(errors[0].message, "b#test: exited with code 1");
+    assert_eq!(
+        check(&out.report, "tests").output_notable,
+        ["b#test: assertion failed: 1 == 2"]
     );
-    assert!(errors[0].message.contains("assertion failed: 1 == 2"));
     assert_eq!(check(&out.report, "tests").status, CheckStatus::Fail);
 }
 
@@ -427,14 +435,12 @@ fn a_failing_task_without_a_log_file_shows_turbos_own_output() {
     let errors = errors(&out.report);
     assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
     assert_eq!(errors[0].rule, "turbo/task-failed");
-    assert!(
-        errors[0]
-            .message
-            .starts_with("b#check: exited with code 1:"),
-        "{}",
-        errors[0].message
-    );
-    assert!(errors[0].message.contains("FATAL: schema 7 is missing"));
+    assert_eq!(errors[0].message, "b#check: exited with code 1");
+    let tail = check(&out.report, "check")
+        .output_tail
+        .clone()
+        .unwrap_or_default();
+    assert!(tail.contains("FATAL: schema 7 is missing"), "{tail}");
     assert_eq!(out.exit_code(), 1);
 }
 
@@ -458,13 +464,13 @@ fn a_task_that_examined_nothing_and_failed_is_an_error_naming_it() {
     let errors = errors(&out.report);
     assert_eq!(errors.len(), 1, "{:#?}", out.report.findings);
     assert_eq!(errors[0].rule, "no-op");
-    assert!(
-        errors[0]
-            .message
-            .starts_with("app#lint: lint exited with code 1 and examined nothing in packages/app:")
-            && errors[0].message.contains("No files found to lint"),
-        "{}",
-        errors[0].message
+    assert_eq!(
+        errors[0].message,
+        "app#lint: lint exited with code 1 and examined nothing in packages/app"
+    );
+    assert_eq!(
+        check(&out.report, "lint").output_notable,
+        ["app#lint: No files found to lint. Please check your paths and ignore patterns."]
     );
     assert_eq!(out.exit_code(), 1);
 }

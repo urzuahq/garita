@@ -463,7 +463,8 @@ fn errors_name_their_path_in_the_message() {
         assert!(e.to_string().starts_with(e.path()), "{e}");
     }
     let all = Config::parse(&with_check("    on: []\n")).unwrap_err();
-    assert_eq!(all.to_string().lines().count(), 2);
+    assert_eq!(all.0.len(), 2);
+    assert!(!all.to_string().contains('\n'));
 }
 
 fn check_with(budget: Option<u64>, on: Vec<Trigger>, on_exceed: Option<OnExceed>) -> Check {

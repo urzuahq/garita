@@ -3,9 +3,14 @@
   "checks": [],
   "commit": null,
   "error": "not a git repository",
+  "error_kind": "environment",
   "examined": {},
   "findings": [],
   "next_action": "garita doctor",
+  "next_action_argv": [
+    "garita",
+    "doctor"
+  ],
   "next_action_inputs": [],
   "next_action_reason": "the run could not start",
   "receipt": null,

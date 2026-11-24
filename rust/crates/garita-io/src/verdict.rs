@@ -1,6 +1,6 @@
 //! Reports for the commands besides `run`: the same `Report`, with their own counts and next action.
 
-use garita_core::report::{Examined, Finding, Report, RunContext, Severity};
+use garita_core::report::{Examined, Finding, NextAction, Report, RunContext, RunError, Severity};
 
 /// A command's report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,19 +14,19 @@ impl Verdict {
     }
 }
 
-/// The command to run next and why, when there is one.
-pub type Next = Option<(String, String)>;
+/// The command to run next, as its arguments, and why, when there is one.
+pub type Next = Option<(Vec<String>, String)>;
 
 pub fn verdict(findings: Vec<Finding>, examined: Examined, next: Next) -> Verdict {
     let mut report = Report::from_run(RunContext::default(), Vec::new(), findings, None);
     report.examined = examined;
-    let (action, reason) = next.map_or((None, None), |(a, r)| (Some(a), Some(r)));
-    report.next_action = action;
-    report.next_action_reason = reason;
+    report.set_next(next.map_or(NextAction::NONE, |(argv, reason)| {
+        NextAction::run(argv, reason)
+    }));
     Verdict { report }
 }
 
-pub fn not_run(error: String) -> Verdict {
+pub fn not_run(error: RunError) -> Verdict {
     Verdict {
         report: Report::not_run(RunContext::default(), error),
     }

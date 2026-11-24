@@ -148,9 +148,52 @@ fn an_exact_older_format_script_is_garitas_in_that_format() {
     let current = hooks::script("pre-push", Trigger::Push);
     assert_eq!(
         hooks::classify(&current, "pre-push", Trigger::Push, hooks::FORMATS),
-        Kind::Garita(1)
+        Kind::Garita(hooks::HOOK_FORMAT)
     );
     assert!(!hooks::classify(&current, "pre-commit", Trigger::Commit, hooks::FORMATS).is_garita());
+}
+
+/// Format 1 exactly as releases wrote it; a change here breaks recognising installed hooks.
+const FORMAT_1_PRE_PUSH: &str = "#!/bin/sh\n\
+    # garita hook format 1: written by `garita hooks install`, which rewrites this file\n\
+    if ! command -v garita >/dev/null 2>&1; then\n  \
+    echo \"garita: the pre-push hook needs garita, which is not on PATH; this push is blocked\" >&2\n  \
+    exit 2\n\
+    fi\n\
+    exec garita run --trigger push\n";
+
+#[test]
+fn a_format_1_hook_is_garitas_and_install_upgrades_it_without_replace() {
+    assert_eq!(
+        hooks::classify(FORMAT_1_PRE_PUSH, "pre-push", Trigger::Push, hooks::FORMATS),
+        Kind::Garita(1)
+    );
+    let repo = configured();
+    let dir = repo.root().join(".git/hooks");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("pre-push"), FORMAT_1_PRE_PUSH).unwrap();
+    fs::set_permissions(dir.join("pre-push"), fs::Permissions::from_mode(0o755)).unwrap();
+    let report = install(&repo.root(), false);
+    assert_eq!(report.status, RunStatus::Pass);
+    assert_eq!(run_rules(&report), ["hook-installed", "hook-updated"]);
+    assert_installed(&dir);
+}
+
+#[test]
+fn a_format_1_hook_is_removed_by_uninstall() {
+    let repo = configured();
+    let dir = repo.root().join(".git/hooks");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("pre-push"), FORMAT_1_PRE_PUSH).unwrap();
+    let report = uninstall(&repo.root());
+    assert_eq!(run_rules(&report), ["hook-absent", "hook-removed"]);
+    assert_absent(&dir);
+}
+
+#[test]
+fn a_hook_one_byte_off_format_1_is_not_garitas() {
+    let edited = FORMAT_1_PRE_PUSH.replace("exit 2", "exit 0");
+    assert!(!hooks::classify(&edited, "pre-push", Trigger::Push, hooks::FORMATS).is_garita());
 }
 
 #[test]

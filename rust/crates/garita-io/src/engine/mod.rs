@@ -13,7 +13,7 @@ mod turbo;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use garita_core::report::{Report, RunContext, Trigger};
+use garita_core::report::{Report, RunContext, RunError, Trigger};
 
 /// The time source for a run's start and finish.
 pub trait Clock: Send + Sync {
@@ -64,7 +64,7 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    fn not_run(trigger: Trigger, tree: Option<String>, error: String) -> Self {
+    fn not_run(trigger: Trigger, tree: Option<String>, error: RunError) -> Self {
         let context = RunContext {
             trigger: Some(trigger),
             tree,
@@ -93,8 +93,9 @@ pub fn to_json(report: &Report) -> String {
             "{{\"schema_version\":1,\"status\":\"not-run\",\"blocking\":false,\"trigger\":null,\
              \"commit\":null,\"tree\":null,\"scope\":null,\"checks\":[],\"findings\":[],\
              \"examined\":{{}},\"next_action\":\"garita doctor\",\
-             \"next_action_reason\":\"the run could not start\",\"next_action_inputs\":[],\
-             \"receipt\":null,\"error\":{error}}}"
+             \"next_action_reason\":\"the run could not start\",\
+             \"next_action_argv\":[\"garita\",\"doctor\"],\"next_action_inputs\":[],\
+             \"receipt\":null,\"error\":{error},\"error_kind\":\"internal\"}}"
         )
     })
 }

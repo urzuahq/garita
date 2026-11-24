@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use garita_core::adapter::rebase;
 use garita_core::config::Config;
-use garita_core::report::{Finding, Scope, ScopeKind, Severity};
+use garita_core::report::{Finding, RunError, Scope, ScopeKind, Severity};
 
 use super::Request;
 use super::finding::{run_file_finding, run_finding};
@@ -43,20 +43,26 @@ impl Resolved {
     }
 }
 
-pub fn resolve(root: &Path, config: &Config, request: &Request) -> Result<Resolved, String> {
+/// The run's scope; a bad `--files` is a usage error and a failed git command an environment one.
+pub fn resolve(root: &Path, config: &Config, request: &Request) -> Result<Resolved, RunError> {
+    let scope_error = |kind: fn(String) -> RunError| {
+        move |e: String| kind(format!("could not compute the scope: {e}"))
+    };
     let kind = config.trigger(request.trigger).scope;
     let mut resolved = match &request.files {
         Some(files) => Resolved {
             kind,
-            files: explicit_files(files)?,
+            files: explicit_files(files).map_err(scope_error(RunError::usage))?,
             base: None,
             explicit: true,
             findings: Vec::new(),
         },
-        None => from_git(root, kind, request.base.as_deref()).map_err(|e| e.to_string())?,
+        None => from_git(root, kind, request.base.as_deref())
+            .map_err(|e| scope_error(RunError::environment)(e.to_string()))?,
     };
     if resolved.kind == ScopeKind::Staged && !resolved.explicit {
-        let partly = git::partly_staged(root).map_err(|e| e.to_string())?;
+        let partly = git::partly_staged(root)
+            .map_err(|e| scope_error(RunError::environment)(e.to_string()))?;
         resolved
             .findings
             .extend(partly.iter().map(|p| partly_staged(p)));

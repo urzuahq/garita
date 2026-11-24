@@ -1,12 +1,13 @@
 //! The `garita` command line.
 
 use std::io::Write;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use garita_core::report::{Report, RunContext, Trigger};
+use garita_core::report::{Report, RunContext, RunError, Trigger};
 use garita_io::engine::{self, Request, SystemClock};
 use garita_io::{doctor, hooks};
 
@@ -84,31 +85,52 @@ enum HooksAction {
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> ExitCode {
+    std::panic::set_hook(Box::new(|_| {}));
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => return usage_error(&e),
     };
     let dir = current_dir();
-    let verdict = match cli.command {
-        Command::Run(args) => return run(args),
-        Command::Describe => return describe(),
-        Command::Doctor => doctor::doctor(&doctor::Request {
-            dir,
-            version: VERSION.to_string(),
-            path: std::env::var_os("PATH"),
+    match cli.command {
+        Command::Run(args) => run(args),
+        Command::Describe => describe(),
+        Command::Doctor => guarded(|| {
+            doctor::doctor(&doctor::Request {
+                dir,
+                version: VERSION.to_string(),
+                path: std::env::var_os("PATH"),
+            })
+            .report
         }),
         Command::Hooks {
             action: HooksAction::Install { replace },
-        } => hooks::install(&dir, replace),
+        } => guarded(|| hooks::install(&dir, replace).report),
         Command::Hooks {
             action: HooksAction::Uninstall,
-        } => hooks::uninstall(&dir),
-    };
-    emit(&verdict.report)
+        } => guarded(|| hooks::uninstall(&dir).report),
+    }
+}
+
+/// Runs a command, printing a `not-run` report when it panics; the panic hook prints nothing.
+fn guarded(command: impl FnOnce() -> Report) -> ExitCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(command)) {
+        Ok(report) => emit(&report),
+        Err(_) => emit(&internal_error(RunContext::default())),
+    }
+}
+
+fn internal_error(context: RunContext) -> Report {
+    Report::not_run(
+        context,
+        RunError::internal("garita stopped on an internal error"),
+    )
 }
 
 fn describe() -> ExitCode {
-    let json = garita_core::describe::describe(VERSION).to_json();
+    let json = std::panic::catch_unwind(|| garita_core::describe::describe(VERSION).to_json());
+    let Ok(json) = json else {
+        return emit(&internal_error(RunContext::default()));
+    };
     if writeln!(std::io::stdout().lock(), "{json}").is_err() {
         let _ = writeln!(
             std::io::stderr().lock(),
@@ -123,23 +145,27 @@ fn current_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// Help and version print as usual; any other usage error under a subcommand is still one
-/// JSON verdict.
+/// Help and version print as usual; any other parser error is a `not-run` report.
 fn usage_error(e: &clap::Error) -> ExitCode {
-    let subcommand = std::env::args().nth(1);
-    let wants_report = matches!(
-        subcommand.as_deref(),
-        Some("run" | "doctor" | "hooks" | "describe")
-    );
-    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) || !wants_report {
+    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
         let _ = e.print();
         return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
     }
-    let rendered = e.render().to_string();
-    let text = rendered.trim();
-    let text = text.strip_prefix("error: ").unwrap_or(text);
-    let report = Report::not_run(RunContext::default(), text.to_string());
+    let report = Report::not_run(RunContext::default(), RunError::usage(usage_message(e)));
     emit(&report)
+}
+
+/// The parser's one-line statement of what was wrong, without its usage block or tips.
+fn usage_message(e: &clap::Error) -> String {
+    if matches!(
+        e.kind(),
+        ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand | ErrorKind::MissingSubcommand
+    ) {
+        return "no command was given; `garita describe` lists the commands".to_string();
+    }
+    let rendered = e.render().to_string();
+    let first = rendered.lines().next().unwrap_or_default().trim();
+    first.strip_prefix("error: ").unwrap_or(first).to_string()
 }
 
 fn run(args: RunArgs) -> ExitCode {
@@ -158,17 +184,12 @@ fn run(args: RunArgs) -> ExitCode {
                 .collect(),
         ),
     };
-    let outcome = std::panic::catch_unwind(|| engine::run(&request, &SystemClock));
-    match outcome {
+    match std::panic::catch_unwind(|| engine::run(&request, &SystemClock)) {
         Ok(outcome) => emit(&outcome.report),
-        Err(_) => {
-            let context = RunContext {
-                trigger: Some(trigger),
-                ..RunContext::default()
-            };
-            let report = Report::not_run(context, "garita stopped on an internal error".into());
-            emit(&report)
-        }
+        Err(_) => emit(&internal_error(RunContext {
+            trigger: Some(trigger),
+            ..RunContext::default()
+        })),
     }
 }
 
@@ -184,3 +205,6 @@ fn emit(report: &Report) -> ExitCode {
     }
     ExitCode::from(report.exit_code())
 }
+
+#[cfg(test)]
+mod tests;

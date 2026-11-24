@@ -7,7 +7,7 @@ use garita_core::adapter::{Adapter, complete_turbo_argv};
 use garita_core::argv::{Command, Placeholder};
 use garita_core::config::{Check, CheckForm, Config};
 use garita_core::glob;
-use garita_core::report::{Finding, Severity, Trigger};
+use garita_core::report::{Finding, RunError, Severity, Trigger};
 
 use super::finding::{finding, plural};
 use super::scope::Resolved;
@@ -48,7 +48,7 @@ pub enum Planned<'a> {
     },
     NotRun {
         check: &'a Check,
-        reason: String,
+        reason: RunError,
     },
 }
 
@@ -63,7 +63,10 @@ pub fn plan<'a>(
         Ok(planned) => planned,
         Err(reason) => Planned::NotRun {
             check,
-            reason: format!("checks.{}: {reason}", check.name),
+            reason: RunError::new(
+                reason.kind,
+                format!("checks.{}: {}", check.name, reason.message),
+            ),
         },
     }
 }
@@ -74,14 +77,14 @@ fn try_plan<'a>(
     trigger: Trigger,
     check: &'a Check,
     scope: &Resolved,
-) -> Result<Planned<'a>, String> {
+) -> Result<Planned<'a>, RunError> {
     let CheckForm::Run {
         command, parser, ..
     } = &check.form
     else {
-        return Err("only a `run` check can be planned".to_string());
+        return Err(RunError::internal("only a `run` check can be planned"));
     };
-    let adapter = Adapter::from_parser_name(parser).map_err(|e| e.to_string())?;
+    let adapter = Adapter::from_parser_name(parser).map_err(|e| RunError::config(e.to_string()))?;
     let turbo = check.via.is_some();
     let files: Vec<String> = scope
         .files
@@ -142,14 +145,10 @@ fn try_plan<'a>(
             vec![rel]
         };
         for batch in batches {
-            units.push(unit(
-                command,
-                adapter,
-                turbo,
-                cwd.clone(),
-                &batch,
-                &affected,
-            )?);
+            units.push(
+                unit(command, adapter, turbo, cwd.clone(), &batch, &affected)
+                    .map_err(RunError::config)?,
+            );
         }
     }
     let env = match (&scope.base, turbo && scope.affected()) {
@@ -235,11 +234,11 @@ fn groups(
     check: &Check,
     files: &[String],
     wants_files: bool,
-) -> Result<(Groups, usize), String> {
+) -> Result<(Groups, usize), RunError> {
     if let Some(partition) = &check.partition {
         let (mut groups, dropped) = by_root(files, &partition.roots);
         if !wants_files {
-            let tracked = git::all_files(root).map_err(|e| e.to_string())?;
+            let tracked = git::all_files(root).map_err(|e| RunError::environment(e.to_string()))?;
             let tracked: Vec<String> = tracked
                 .iter()
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -252,9 +251,9 @@ fn groups(
     }
     let cwd = check.cwd.clone().unwrap_or_default();
     if !root.join(&cwd).is_dir() {
-        return Err(format!(
+        return Err(RunError::config(format!(
             "the directory `{cwd}` given as `cwd` does not exist"
-        ));
+        )));
     }
     if cwd.is_empty() {
         return Ok((BTreeMap::from([(cwd, files.to_vec())]), 0));
@@ -335,5 +334,42 @@ mod tests {
         assert_eq!(groups.get("packages/app"), Some(&strings(&["src/a.ts"])));
         assert_eq!(groups.get("packages/lib"), Some(&strings(&["b.ts"])));
         assert_eq!(groups.len(), 2);
+    }
+
+    fn check_named(yaml: &str) -> (Config, Check) {
+        let config = Config::parse(yaml).unwrap();
+        let check = config.checks[0].clone();
+        (config, check)
+    }
+
+    fn resolved() -> Resolved {
+        Resolved {
+            kind: garita_core::report::ScopeKind::All,
+            files: Vec::new(),
+            base: None,
+            explicit: true,
+            findings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_git_command_is_an_environment_error_and_a_missing_cwd_a_config_one() {
+        let dir = std::env::temp_dir().join(format!("garita-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (config, partitioned) = check_named(
+            "schema_version: 1\nchecks:\n  a:\n    run: x\n    partition: { by: dir, roots: ['p/*'] }\n",
+        );
+        let (_, missing) =
+            check_named("schema_version: 1\nchecks:\n  a:\n    run: x\n    cwd: nope\n");
+        let git = plan(&dir, &config, Trigger::Commit, &partitioned, &resolved());
+        let cwd = plan(&dir, &config, Trigger::Commit, &missing, &resolved());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let (Planned::NotRun { reason: git, .. }, Planned::NotRun { reason: cwd, .. }) = (git, cwd)
+        else {
+            panic!("both checks should be not run");
+        };
+        assert_eq!(git.kind, garita_core::report::ErrorKind::Environment);
+        assert!(git.message.starts_with("checks.a: "), "{}", git.message);
+        assert_eq!(cwd.kind, garita_core::report::ErrorKind::Config);
     }
 }

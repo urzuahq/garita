@@ -1,11 +1,10 @@
 use super::{Outcome, ParseContext, Parsed, ToolFinding, ToolOutput, clip, examined_files};
 use crate::report::Severity;
 
-const STREAM_LINES: usize = 10;
-const TAIL_BYTES: usize = 4000;
 const NOTABLE_LINES: usize = 5;
+const LAST_LINES: usize = 10;
 
-/// Reads only the exit code, keeping the output's last lines as the finding's message.
+/// Reads only the exit code; the output stays on the check, with its likely reason picked out.
 pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     let Some(exit) = output.exit_code else {
         return Parsed::killed();
@@ -13,11 +12,10 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
     if exit == 0 {
         return Parsed::from_findings(Vec::new(), context.files);
     }
-    let tail = tail(output.stderr, output.stdout);
-    let message = if tail.is_empty() {
+    let message = if printed_nothing(output.stderr, output.stdout) {
         format!("exited with code {exit} and printed nothing")
     } else {
-        format!("exited with code {exit}:\n{tail}")
+        format!("exited with code {exit}")
     };
     Parsed {
         outcome: Outcome::Findings,
@@ -31,84 +29,40 @@ pub fn parse(output: &ToolOutput<'_>, context: &ParseContext<'_>) -> Parsed {
             fix: None,
         }],
         examined: examined_files(context.files),
+        notable: notable(output.stderr, output.stdout),
     }
 }
 
-/// Up to [`NOTABLE_LINES`] lines from anywhere in the output that look like a reason, then the
-/// last non-blank lines of stderr and of stdout; each block gets at most [`STREAM_LINES`] and an
-/// equal share of [`TAIL_BYTES`], and blocks are labelled when there is more than one.
-pub fn tail(stderr: &str, stdout: &str) -> String {
-    let tails = [
-        ("stderr", last_lines(stderr)),
-        ("stdout", last_lines(stdout)),
-    ];
-    let notable = notable_lines(stderr, stdout, &tails);
-    let (from_stderr, from_stdout): (Vec<_>, Vec<_>) = notable.into_iter().partition(|(e, _)| *e);
-    let blocks: Vec<(&str, Vec<&str>)> = [
-        ("stderr notable", second(from_stderr)),
-        ("stdout notable", second(from_stdout)),
-    ]
-    .into_iter()
-    .chain(tails)
-    .filter(|(_, lines)| !lines.is_empty())
-    .collect();
-    let labelled = blocks.len() > 1;
-    let labels: usize = if labelled {
-        blocks.iter().map(|(label, _)| label.len() + 3).sum()
-    } else {
-        0
-    };
-    let share = TAIL_BYTES.saturating_sub(labels) / blocks.len().max(1);
-    let joined = blocks
-        .iter()
-        .map(|(label, lines)| {
-            let body = last_bytes(&lines.join("\n"), share);
-            if labelled {
-                format!("{label}:\n{body}")
-            } else {
-                body
-            }
-        })
-        .collect::<Vec<_>>();
-    sanitize(&joined.join("\n"))
+/// Whether neither stream holds a non-blank line.
+pub fn printed_nothing(stderr: &str, stdout: &str) -> bool {
+    stderr.trim().is_empty() && stdout.trim().is_empty()
 }
 
-fn last_lines(text: &str) -> Vec<&str> {
-    let mut lines: Vec<&str> = text
+/// The last [`LAST_LINES`] non-blank lines of `text`, clipped and with control characters replaced.
+pub fn last_lines(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = text
         .lines()
         .rev()
-        .map(|l| clip(l.trim_end()))
-        .filter(|l| !l.trim().is_empty())
-        .take(STREAM_LINES)
+        .map(|l| clip(l.trim()))
+        .filter(|l| !l.is_empty())
+        .take(LAST_LINES)
+        .map(sanitize)
         .collect();
     lines.reverse();
     lines
 }
 
-/// Lines from both streams, in order, that name an error, skipping Node's deprecation noise and
-/// lines the tails already hold.
-fn second(pairs: Vec<(bool, &str)>) -> Vec<&str> {
-    pairs.into_iter().map(|(_, line)| line).collect()
-}
-
-fn notable_lines<'a>(
-    stderr: &'a str,
-    stdout: &'a str,
-    tails: &[(&str, Vec<&str>)],
-) -> Vec<(bool, &'a str)> {
-    let mut found: Vec<(bool, &str)> = Vec::new();
-    let lines = stderr
-        .lines()
-        .map(|l| (true, l))
-        .chain(stdout.lines().map(|l| (false, l)));
-    for (from_stderr, line) in lines {
+/// Up to [`NOTABLE_LINES`] distinct lines, stderr first, that look like the reason a command
+/// failed, skipping runtime noise; each is clipped and has its control characters replaced.
+pub fn notable(stderr: &str, stdout: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in stderr.lines().chain(stdout.lines()) {
         if found.len() == NOTABLE_LINES {
             break;
         }
-        let line = clip(line.trim_end());
-        let held = tails.iter().any(|(_, t)| t.contains(&line));
-        if !held && !found.iter().any(|(_, l)| *l == line) && is_notable(line) {
-            found.push((from_stderr, line));
+        let line = sanitize(clip(line.trim()));
+        if is_notable(&line) && !found.contains(&line) {
+            found.push(line);
         }
     }
     found
@@ -234,71 +188,55 @@ pub fn sanitize(text: &str) -> String {
         .collect()
 }
 
-fn last_bytes(text: &str, limit: usize) -> String {
-    let mut start = text.len().saturating_sub(limit);
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    text.get(start..).unwrap_or_default().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn numbered(name: &str, n: usize) -> String {
-        (1..=n).map(|i| format!("{name} {i}\n")).collect()
-    }
-
     #[test]
-    fn each_stream_keeps_its_own_last_lines_under_a_label() {
-        let stderr = "--fail-on-drift set: failing\n";
-        let got = tail(stderr, &numbered("json", 50));
-        let want = format!(
-            "stderr:\n--fail-on-drift set: failing\nstdout:\n{}",
-            numbered("json", 50)
-                .lines()
-                .skip(40)
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        assert_eq!(got, want);
-        let got = tail(&numbered("warn", 30), "error: the real one\n");
-        assert!(got.starts_with("stderr:\nwarn 21\n"), "{got}");
-        assert!(got.ends_with("stdout:\nerror: the real one"), "{got}");
-    }
-
-    #[test]
-    fn an_early_reason_line_is_kept_as_notable() {
+    fn notable_lines_come_from_anywhere_in_the_output() {
         let mut stdout = "0004-x.md: invalid status \"Acceptedd\"\n".to_string();
         stdout.push_str("(node:1) [DEP0169] DeprecationWarning: error-ish noise\n");
         stdout.push_str("noerrors here\n");
-        stdout.push_str(&numbered("ok", 40));
-        let got = tail("", &stdout);
-        assert!(
-            got.starts_with(
-                "stdout notable:\n0004-x.md: invalid status \"Acceptedd\"\nstdout:\nok 31\n"
-            ),
-            "{got}"
-        );
-        assert!(
-            !got.contains("Deprecation") && !got.contains("noerrors"),
-            "{got}"
+        stdout.push_str(&"ok\n".repeat(40));
+        assert_eq!(
+            notable("", &stdout),
+            ["0004-x.md: invalid status \"Acceptedd\""]
         );
     }
 
     #[test]
-    fn notable_lines_are_capped_and_not_repeated_from_the_tails() {
+    fn notable_lines_are_capped_distinct_and_stderr_first() {
         let stderr: String = (1..=20).map(|i| format!("Error {i}\n")).collect();
-        let got = tail(&stderr, &numbered("x", 30));
-        assert!(
-            got.starts_with(
-                "stderr notable:\nError 1\nError 2\nError 3\nError 4\nError 5\nstderr:\nError 11\n"
-            ),
-            "{got}"
+        assert_eq!(
+            notable(&stderr, "error: last\n"),
+            ["Error 1", "Error 2", "Error 3", "Error 4", "Error 5"]
         );
-        let got = tail("Error 1\nError 1\n", "");
-        assert_eq!(got, "Error 1\nError 1");
+        assert_eq!(
+            notable("Error 1\nError 1\n", "error: b\n"),
+            ["Error 1", "error: b"]
+        );
+        assert!(notable("", "").is_empty());
+    }
+
+    #[test]
+    fn a_failure_message_is_one_sentence() {
+        let context = ParseContext::default();
+        let output = ToolOutput {
+            stdout: "line one\nerror: two\n",
+            stderr: "",
+            exit_code: Some(3),
+        };
+        let parsed = parse(&output, &context);
+        assert_eq!(parsed.findings[0].message, "exited with code 3");
+        assert_eq!(parsed.notable, ["error: two"]);
+        let silent = ToolOutput {
+            stdout: " \n",
+            ..output
+        };
+        assert_eq!(
+            parse(&silent, &context).findings[0].message,
+            "exited with code 3 and printed nothing"
+        );
     }
 
     #[test]
@@ -376,23 +314,31 @@ mod tests {
     }
 
     #[test]
+    fn last_lines_skip_blanks_and_keep_order() {
+        let text: String = (1..=30).map(|i| format!("line {i}\n\n")).collect();
+        let got = last_lines(&text);
+        assert_eq!(got.len(), 10);
+        assert_eq!((got[0].as_str(), got[9].as_str()), ("line 21", "line 30"));
+    }
+
+    #[test]
+    fn a_line_indented_past_the_cap_keeps_its_text() {
+        let text = format!("first\n{}boom\n", " ".repeat(crate::adapter::LINE_CAP + 1));
+        assert_eq!(last_lines(&text), ["first", "boom"]);
+    }
+
+    #[test]
     fn control_characters_are_replaced() {
         assert_eq!(sanitize("a\u{1b}[2Jb\tc\nd\u{7}"), "a?[2Jb\tc\nd?");
-        assert_eq!(tail("\u{0}bin\u{8}ary\n", ""), "?bin?ary");
+        assert_eq!(
+            notable("\u{0}error: bin\u{8}ary\n", ""),
+            ["?error: bin?ary"]
+        );
     }
 
     #[test]
-    fn one_stream_is_unlabelled_and_an_empty_one_adds_nothing() {
-        assert_eq!(tail("", "a\n\nb\n"), "a\nb");
-        assert_eq!(tail("boom\n", "  \n"), "boom");
-        assert_eq!(tail("", ""), "");
-    }
-
-    #[test]
-    fn the_tail_stays_within_the_cap_and_clips_lines() {
-        let long = format!("{}\n", "x".repeat(5000)).repeat(20);
-        let got = tail(&long, &long);
-        assert!(got.len() <= TAIL_BYTES, "{}", got.len());
-        assert!(got.lines().all(|l| l.len() <= 300));
+    fn notable_lines_are_clipped() {
+        let long = format!("error: {}\n", "x".repeat(5000));
+        assert!(notable(&long, "").iter().all(|l| l.len() <= 300));
     }
 }

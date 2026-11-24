@@ -230,6 +230,11 @@ pub fn quote(word: &str) -> String {
     }
 }
 
+/// The words as one command line that [`split`] reads back as the same words.
+pub fn join(words: &[String]) -> String {
+    words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

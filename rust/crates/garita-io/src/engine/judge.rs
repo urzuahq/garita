@@ -3,11 +3,13 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use garita_core::adapter::{
-    Adapter, Outcome as Parsed, ParseContext, ToolOutput, fingerprint, output_tail,
+    Adapter, Outcome as Parsed, ParseContext, ToolOutput, fingerprint, last_lines, notable,
+    printed_nothing,
 };
 use garita_core::config::{Check, Config, OnCrash, OnExceed};
 use garita_core::report::{
-    CheckEntry, CheckKind, CheckStatus, Examined, Finding, Severity, Trigger, rerun_command,
+    CheckEntry, CheckKind, CheckStatus, Examined, Finding, RunError, Severity, Trigger,
+    rerun_command,
 };
 
 use super::exec::{Executed, UnitRun, command_line};
@@ -33,7 +35,7 @@ pub struct CheckResult {
     pub entry: CheckEntry,
     pub findings: Vec<Finding>,
     /// Why the check could not run, when it could not.
-    pub not_run: Option<String>,
+    pub not_run: Option<RunError>,
     pub record: Record,
 }
 
@@ -45,18 +47,13 @@ impl CheckResult {
         kind: CheckKind,
         status: CheckStatus,
         findings: Vec<Finding>,
-        not_run: Option<String>,
+        not_run: Option<RunError>,
         record: Record,
     ) -> Self {
         Self {
             entry: CheckEntry {
-                name: name.to_string(),
-                kind,
-                status,
-                duration_ms: 0,
-                examined: Examined::new(),
                 rerun: Some(rerun_command(Some(trigger), name, &[])),
-                suppressed: BTreeMap::new(),
+                ..CheckEntry::new(name, kind, status)
             },
             findings,
             not_run,
@@ -77,8 +74,9 @@ struct Tally<'a> {
     plan: &'a Plan<'a>,
     findings: Vec<Finding>,
     examined: Examined,
-    not_run: Option<String>,
+    not_run: Option<RunError>,
     suppressed: BTreeMap<Severity, u64>,
+    notable: Vec<String>,
 }
 
 pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResult {
@@ -89,11 +87,17 @@ pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResul
         examined: Examined::new(),
         not_run: None,
         suppressed: BTreeMap::new(),
+        notable: Vec::new(),
     };
     for run in &executed.runs {
         match &run.outcome {
-            Err(reason) | Ok(Outcome::CouldNotStart { reason }) => {
-                tally.not_run = Some(format!("checks.{}: {reason}", plan.check.name));
+            Err(error) => {
+                let message = format!("checks.{}: {}", plan.check.name, error.message);
+                tally.not_run = Some(RunError::new(error.kind, message));
+            }
+            Ok(Outcome::CouldNotStart { reason }) => {
+                let message = format!("checks.{}: {reason}", plan.check.name);
+                tally.not_run = Some(RunError::environment(message));
             }
             Ok(Outcome::Ran(finished)) => tally.unit(run, finished),
         }
@@ -126,6 +130,9 @@ pub fn judge(config: &Config, plan: &Plan<'_>, executed: Executed) -> CheckResul
                 Vec::new()
             },
         )),
+        output_tail: None,
+        output: None,
+        output_notable: tally.notable,
         suppressed: tally.suppressed,
     };
     let units: Vec<_> = executed.runs.iter().map(|r| r.unit.clone()).collect();
@@ -183,6 +190,7 @@ impl Tally<'_> {
             let sum = self.examined.entry(unit).or_insert(0);
             *sum = sum.saturating_add(count);
         }
+        self.note(parsed.notable);
         let name = self.name().to_string();
         let floor = self.plan.check.min_severity;
         for f in parsed.findings {
@@ -211,13 +219,8 @@ impl Tally<'_> {
         let code = output.exit_code.filter(|c| *c != 0);
         let message = match (code, given.filter(|n| *n > 0)) {
             (Some(code), _) => {
-                let tail = output_tail(output.stderr, output.stdout);
-                let head = format!("{name} exited with code {code} and examined nothing{place}");
-                if tail.is_empty() {
-                    head
-                } else {
-                    format!("{head}:\n{tail}")
-                }
+                self.note(notable(output.stderr, output.stdout));
+                format!("{name} exited with code {code} and examined nothing{place}")
             }
             (None, Some(n)) => format!(
                 "{name} was given {}{place} and examined none",
@@ -246,19 +249,19 @@ impl Tally<'_> {
                 }
             }
             Err(reason) => {
-                let tail = output_tail(&finished.stderr, &finished.stdout);
-                if tail.is_empty() {
+                if printed_nothing(&finished.stderr, &finished.stdout) {
                     self.unrecognized(format!("{reason}; turbo printed nothing"));
                 } else {
-                    self.unrecognized(format!("{reason}; turbo printed:\n{tail}"));
+                    self.note(notable(&finished.stderr, &finished.stdout));
+                    self.unrecognized(reason.clone());
                 }
             }
         }
         let code = finished.exit_code.unwrap_or_default();
         if code != 0 && self.errors() == errors_before {
-            let tail = output_tail(&finished.stderr, &finished.stdout);
+            self.note(notable(&finished.stderr, &finished.stdout));
             self.unrecognized(format!(
-                "turbo exited with code {code} but no task reported an error:\n{tail}"
+                "turbo exited with code {code} but no task reported an error"
             ));
         }
     }
@@ -270,7 +273,21 @@ impl Tally<'_> {
             exit_code: task.exit_code,
         };
         let start = self.findings.len();
+        let noted = self.notable.len();
         self.parsed(&output, &task.directory, None);
+        let unplaced = self
+            .findings
+            .iter()
+            .skip(start)
+            .any(|f| f.severity == Severity::Error && f.file.is_none());
+        // A task's log is not the check's output, so without a picked-out line its last lines
+        // stand in for the tail the finding cannot carry.
+        if unplaced && self.notable.len() == noted {
+            self.note(last_lines(log));
+        }
+        for line in self.notable.iter_mut().skip(noted) {
+            *line = format!("{}: {line}", task.task);
+        }
         for f in self.findings.iter_mut().skip(start) {
             if f.file.is_none() {
                 f.message = format!("{}: {}", task.task, f.message);
@@ -298,12 +315,8 @@ impl Tally<'_> {
             || "did not finish".to_string(),
             |c| format!("exited with code {c}"),
         );
-        let tail = output_tail(&finished.stderr, &finished.stdout);
-        let message = if tail.is_empty() {
-            format!("{}: {code}", task.task)
-        } else {
-            format!("{}: {code}:\n{tail}", task.task)
-        };
+        self.note(notable(&finished.stderr, &finished.stdout));
+        let message = format!("{}: {code}", task.task);
         let name = self.name().to_string();
         self.findings.push(finding(
             &name,
@@ -311,6 +324,15 @@ impl Tally<'_> {
             "turbo/task-failed",
             message,
         ));
+    }
+
+    /// Adds lines to the check's notable ones, each once.
+    fn note(&mut self, lines: Vec<String>) {
+        for line in lines {
+            if !self.notable.contains(&line) {
+                self.notable.push(line);
+            }
+        }
     }
 
     fn errors(&self) -> usize {
