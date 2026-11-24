@@ -14,6 +14,26 @@ fn crashed(parsed: &Parsed) -> bool {
 }
 
 #[test]
+fn within_root_names_inside_paths_relative_and_keeps_outside_ones() {
+    use std::path::Path;
+    let root = Path::new("/work/repo");
+    let shown = |p: &str| within_root(root, Path::new(p));
+    assert_eq!(
+        shown("/work/repo/.git/hooks/pre-commit"),
+        ".git/hooks/pre-commit"
+    );
+    assert_eq!(shown("/work/repo"), ".");
+    assert_eq!(shown("/work/repo2/x"), "/work/repo2/x");
+    assert_eq!(shown("/work/repo2"), "/work/repo2");
+    assert_eq!(shown("/work/repo/../x"), "/work/x");
+    assert_eq!(shown("/work/repo/sub/../../outside"), "/work/outside");
+    assert_eq!(shown("/work/repo/sub/../.hh/f"), ".hh/f");
+    assert_eq!(shown("/work/repo/./a"), "a");
+    assert_eq!(shown("/work/repo/."), ".");
+    assert_eq!(shown("/elsewhere/hooks"), "/elsewhere/hooks");
+}
+
+#[test]
 fn rebase_joins_and_normalises() {
     assert_eq!(rebase("", "src/a.ts"), "src/a.ts");
     assert_eq!(rebase("", "./src/a.ts"), "src/a.ts");

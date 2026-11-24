@@ -2,7 +2,7 @@
   "blocking": false,
   "checks": [],
   "commit": null,
-  "error": "/repo/.garita/config.yaml does not exist",
+  "error": ".garita/config.yaml does not exist",
   "error_kind": "config",
   "examined": {},
   "findings": [],

@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use crate::shown::{shown, without_root};
 use garita_core::ObjectId;
 use thiserror::Error;
 
@@ -15,8 +16,8 @@ pub enum GitError {
     GitMissing,
     #[error("could not run `git`: {0}")]
     Spawn(io::Error),
-    #[error("{0} is not inside a git repository")]
-    NotARepository(PathBuf),
+    #[error("the current directory is not inside a git repository")]
+    NotARepository,
     #[error("`{0}` does not name a commit in this repository")]
     RefNotFound(String),
     #[error("this is a shallow clone, so the merge base with `{0}` is not here")]
@@ -32,7 +33,7 @@ pub enum GitError {
     #[error("`git {args}` printed something unexpected: {output}")]
     Unexpected { args: String, output: String },
     #[error("could not use the temporary index {path}: {source}")]
-    TempIndex { path: PathBuf, source: io::Error },
+    TempIndex { path: String, source: io::Error },
 }
 
 /// A `git` command that ignores user settings that would change its output, and never prompts.
@@ -64,10 +65,15 @@ fn command(root: &Path) -> Command {
 /// Runs git, returning how to describe the call alongside its output.
 fn output(mut cmd: Command) -> Result<(String, Output), GitError> {
     let desc = describe(&cmd);
-    let out = cmd.output().map_err(|e| match e.kind() {
+    let root = cmd.get_args().nth(1).map(PathBuf::from);
+    let mut out = cmd.output().map_err(|e| match e.kind() {
         io::ErrorKind::NotFound => GitError::GitMissing,
         _ => GitError::Spawn(e),
     })?;
+    if let Some(root) = root {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        out.stderr = without_root(&root, &stderr).into_bytes();
+    }
     Ok((desc, out))
 }
 
@@ -170,7 +176,7 @@ pub fn root(dir: &Path) -> Result<PathBuf, GitError> {
     cmd.args(["rev-parse", "--show-toplevel"]);
     let (_, out) = output(cmd)?;
     if !out.status.success() {
-        return Err(GitError::NotARepository(dir.to_path_buf()));
+        return Err(GitError::NotARepository);
     }
     Ok(path_line(&out.stdout))
 }
@@ -350,7 +356,7 @@ impl TempIndex {
             Err(source) => Err(source),
         };
         copied.map_err(|source| GitError::TempIndex {
-            path: temp.path.clone(),
+            path: shown(root, &temp.path),
             source,
         })?;
         Ok(temp)

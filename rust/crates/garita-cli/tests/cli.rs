@@ -73,6 +73,25 @@ fn garitas_own(rule: &str) -> bool {
             .any(|s| rule.ends_with(s))
 }
 
+/// Whether `text` names a path inside a test sandbox's `repo` directory.
+fn names_sandbox_repo(text: &str) -> bool {
+    text.match_indices("garita-cli-").any(|(at, _)| {
+        let rest = text.get(at..).unwrap_or_default();
+        rest.split('/')
+            .nth(1)
+            .and_then(|segment| segment.strip_prefix("repo"))
+            .is_some_and(|after| !after.starts_with(|c: char| c.is_alphanumeric() || c == '-'))
+    })
+}
+
+fn assert_no_sandbox_path(report: &Report) {
+    let error = report.error.as_deref().unwrap_or_default();
+    assert!(!names_sandbox_repo(error), "{error}");
+    for f in report.findings.iter().filter(|f| garitas_own(&f.rule)) {
+        assert!(!names_sandbox_repo(&f.message), "{}", f.message);
+    }
+}
+
 /// stdout is exactly one JSON object and a newline; it is a report that keeps the contract.
 fn report_of(out: &Output) -> Report {
     let stdout = String::from_utf8(out.stdout.clone()).unwrap();
@@ -108,6 +127,7 @@ fn report_of(out: &Output) -> Report {
             f.message
         );
     }
+    assert_no_sandbox_path(&report);
     assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
     for f in &report.findings {
         if let Some(check) = &f.check {
@@ -155,12 +175,63 @@ fn outside_a_repository_is_not_run_and_exits_2() {
     let out = garita(&t.repo(), &["run", "--trigger", "push"]);
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(2));
-    assert!(
-        report
-            .error
-            .unwrap()
-            .contains("not inside a git repository")
+    assert_eq!(
+        report.error.as_deref(),
+        Some("the current directory is not inside a git repository")
     );
+}
+
+#[test]
+fn a_bad_config_is_named_relative_to_the_repository() {
+    let t = Temp::new();
+    git(&t.repo(), &["init", "-q", "-b", "main"]);
+    t.write(".garita/config.yaml", "schema_version: 1\nchecks: 3\n");
+    let out = garita(&t.repo(), &["run"]);
+    let report = report_of(&out);
+    assert_eq!(report.error_kind, Some(ErrorKind::Config));
+    let error = report.error.unwrap();
+    assert!(
+        error.starts_with(".garita/config.yaml is not a valid config: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_missing_config_is_named_relative_to_the_repository() {
+    let t = Temp::new();
+    git(&t.repo(), &["init", "-q", "-b", "main"]);
+    let out = garita(&t.repo(), &["run"]);
+    assert_eq!(
+        report_of(&out).error.as_deref(),
+        Some(".garita/config.yaml does not exist")
+    );
+}
+
+#[test]
+fn a_name_that_is_not_a_check_has_no_entry_and_no_output_file() {
+    let t = Temp::new();
+    lint_repo(&t);
+    t.write("a.ts", "x\n");
+    git(&t.repo(), &["add", "a.ts"]);
+    let out = garita(&t.repo(), &["run", "nosuch", "alsonot"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::NotRun);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(report.error_kind, Some(ErrorKind::Usage));
+    assert_eq!(
+        report.error.as_deref(),
+        Some("`nosuch`, `alsonot` are not checks in the config")
+    );
+    assert_eq!(report.next_action.as_deref(), Some("garita describe"));
+    assert!(report.checks.is_empty(), "{:?}", report.checks);
+    let runs: Vec<_> = fs::read_dir(t.repo().join(".garita/receipts"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .collect();
+    for run in runs {
+        assert_eq!(fs::read_dir(run.path()).unwrap().count(), 0);
+    }
 }
 
 #[test]
@@ -343,4 +414,15 @@ fn describe_prints_the_golden_and_nothing_else() {
     let golden: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(without_version(printed), golden);
+}
+
+#[test]
+fn a_git_failure_does_not_name_the_repository_path() {
+    let t = Temp::new();
+    lint_repo(&t);
+    fs::write(t.repo().join(".git/index"), "junk\n").unwrap();
+    let out = garita(&t.repo(), &["run"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::NotRun);
+    assert!(report.error.unwrap().contains(" .git/garita-index-"));
 }

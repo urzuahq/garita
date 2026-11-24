@@ -8,4 +8,5 @@ pub mod git;
 pub mod hooks;
 pub mod process;
 pub mod receipts;
+pub mod shown;
 pub mod verdict;

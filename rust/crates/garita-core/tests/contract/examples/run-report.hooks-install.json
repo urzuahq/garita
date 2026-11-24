@@ -11,7 +11,7 @@
       "file": null,
       "fingerprint": "0123456789abcdef",
       "line": null,
-      "message": "installed /repo/.git/hooks/pre-commit",
+      "message": "installed .git/hooks/pre-commit",
       "rule": "hook-installed",
       "severity": "info"
     },
@@ -20,7 +20,7 @@
       "file": null,
       "fingerprint": "0123456789abcdef",
       "line": null,
-      "message": "installed /repo/.git/hooks/pre-push",
+      "message": "installed .git/hooks/pre-push",
       "rule": "hook-installed",
       "severity": "info"
     }

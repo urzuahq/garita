@@ -15,6 +15,7 @@ use crate::engine::session::requires_error;
 use crate::git;
 use crate::hooks::{self, HOOK_FORMAT, HOOKS, Kind};
 use crate::receipts;
+use crate::shown::shown;
 use crate::verdict::{self, Next, Verdict, finding};
 
 const INSTALL: &str = "garita hooks install";
@@ -91,7 +92,7 @@ fn hook_findings(root: &Path) -> Result<Vec<Finding>, String> {
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
         let path = dir.join(name);
-        let shown = path.display();
+        let shown = shown(root, &path);
         let file = hooks::examine(&path, name, trigger)
             .map_err(|e| format!("could not read {shown}: {e}"))?;
         let (wants_exec, found) = match file.kind {
@@ -209,7 +210,7 @@ fn check_findings(root: &Path, check: &Check, path: Option<&OsStr>) -> Vec<Findi
                     Lookup::Found(_) => {}
                     Lookup::NotExecutable(at) => push(
                         "doctor/tool-not-executable",
-                        format!("the program `{program}` at {} is not executable", at.display()),
+                        format!("the program `{program}` at {} is not executable", shown(root, &at)),
                     ),
                     Lookup::Missing => push(
                         "doctor/tool-missing",

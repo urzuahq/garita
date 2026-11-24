@@ -218,10 +218,11 @@ fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: Option<&Path>) ->
         output.unwrap_or(Path::new(NULL_DEVICE)),
     );
     invocation.env.clone_from(&plan.env);
+    invocation.root = Some(root.to_path_buf());
     let outcome = process::run(&invocation).map_err(|e| RunError::environment(e.to_string()));
     let turbo = match (&outcome, before) {
         (Ok(Outcome::Ran(_)), Some(before)) => {
-            Some(turbo::read(&cwd, &unit.cwd, &before, &unit.argv))
+            Some(turbo::read(root, &cwd, &unit.cwd, &before, &unit.argv))
         }
         _ => None,
     };

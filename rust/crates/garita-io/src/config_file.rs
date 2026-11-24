@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use garita_core::ObjectId;
 use garita_core::config::{Config, ConfigErrors};
@@ -14,14 +14,14 @@ pub const PATH: &str = ".garita/config.yaml";
 
 #[derive(Debug, Error)]
 pub enum ConfigFileError {
-    #[error("{0} does not exist")]
-    Missing(PathBuf),
-    #[error("could not read {path}: {source}")]
-    Unreadable { path: PathBuf, source: io::Error },
-    #[error("{path} is not a valid config: {errors}")]
-    Invalid { path: PathBuf, errors: ConfigErrors },
-    #[error("could not hash {path}: {source}")]
-    Hash { path: PathBuf, source: GitError },
+    #[error("{PATH} does not exist")]
+    Missing,
+    #[error("could not read {PATH}: {source}")]
+    Unreadable { source: io::Error },
+    #[error("{PATH} is not a valid config: {errors}")]
+    Invalid { errors: ConfigErrors },
+    #[error("could not hash {PATH}: {source}")]
+    Hash { source: GitError },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,17 +34,10 @@ pub struct Loaded {
 pub fn load(root: &Path) -> Result<Loaded, ConfigFileError> {
     let path = root.join(PATH);
     let text = fs::read_to_string(&path).map_err(|source| match source.kind() {
-        io::ErrorKind::NotFound => ConfigFileError::Missing(path.clone()),
-        _ => ConfigFileError::Unreadable {
-            path: path.clone(),
-            source,
-        },
+        io::ErrorKind::NotFound => ConfigFileError::Missing,
+        _ => ConfigFileError::Unreadable { source },
     })?;
-    let config = Config::parse(&text).map_err(|errors| ConfigFileError::Invalid {
-        path: path.clone(),
-        errors,
-    })?;
-    let hash =
-        git::hash_object(root, &path).map_err(|source| ConfigFileError::Hash { path, source })?;
+    let config = Config::parse(&text).map_err(|errors| ConfigFileError::Invalid { errors })?;
+    let hash = git::hash_object(root, &path).map_err(|source| ConfigFileError::Hash { source })?;
     Ok(Loaded { config, hash })
 }

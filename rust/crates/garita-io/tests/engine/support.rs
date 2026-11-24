@@ -180,6 +180,7 @@ impl Repo {
     pub fn run_request(&self, request: &Request) -> Outcome {
         let outcome = engine::run(request, &self.clock);
         assert_contract(&outcome.report);
+        assert_relative(&outcome.report, &self.root());
         outcome
     }
 
@@ -215,6 +216,26 @@ pub fn replay_body(case: &str) -> String {
         code.trim(),
         d = dir.display()
     )
+}
+
+/// Neither `error` nor a message garita wrote names `root`'s absolute path.
+pub fn assert_relative(report: &Report, root: &Path) {
+    let real = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    for root in [root, real.as_path()] {
+        assert_relative_to(report, root.to_str().unwrap());
+    }
+}
+
+fn assert_relative_to(report: &Report, root: &str) {
+    let error = report.error.as_deref().unwrap_or_default();
+    assert!(!error.contains(root), "{error}");
+    for f in report
+        .findings
+        .iter()
+        .filter(|f| !f.rule.contains("/failed"))
+    {
+        assert!(!f.message.contains(root), "{}", f.message);
+    }
 }
 
 /// The contract invariants every report must hold (RFC-1 §5).

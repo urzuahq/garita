@@ -128,8 +128,9 @@ impl<'a> Session<'a> {
                 .findings
                 .push(run_finding(Severity::Warning, "no-checks", message));
         }
+        let unknown = unknown_error(&picks);
         let results = self.results(&picks, &scope);
-        self.finish(Some(&scope), results, None)
+        self.finish(Some(&scope), results, unknown)
     }
 
     fn results(&self, picks: &[Pick<'_>], scope: &Resolved) -> Vec<CheckResult> {
@@ -176,18 +177,15 @@ impl<'a> Session<'a> {
                     None,
                     Vec::new(),
                 )),
-                Pick::NotRun {
-                    name,
-                    check,
-                    reason,
-                } => Some(self.unrun(
-                    name,
-                    *check,
+                Pick::NotRun { check, reason } => Some(self.unrun(
+                    &check.name,
+                    Some(check),
                     CheckStatus::NotRun,
                     Vec::new(),
                     Some(reason.clone()),
                     Vec::new(),
                 )),
+                Pick::Unknown(_) => None,
             };
             slots.push(result);
         }
@@ -251,8 +249,11 @@ impl<'a> Session<'a> {
         let mut findings: Vec<Finding> = scope.map(|s| s.findings.clone()).unwrap_or_default();
         findings.extend(results.iter().flat_map(|r| r.findings.iter().cloned()));
         findings.extend(self.trigger_budget());
-        let reasons: Vec<&RunError> = results.iter().filter_map(|r| r.not_run.as_ref()).collect();
-        let error = error.or_else(|| RunError::combine(&reasons));
+        let reasons: Vec<&RunError> = error
+            .iter()
+            .chain(results.iter().filter_map(|r| r.not_run.as_ref()))
+            .collect();
+        let error = RunError::combine(&reasons);
         let trigger = self.request.trigger;
         let started_at = crate::clock::rfc3339(self.started);
         let receipt_path = file_name(&started_at, trigger, &self.run_id)
@@ -321,6 +322,23 @@ impl<'a> Session<'a> {
             run_finding(severity, "budget", message)
         })
     }
+}
+
+/// One usage error naming every name that is not a check, or `None` when all are.
+fn unknown_error(picks: &[Pick<'_>]) -> Option<RunError> {
+    let names: Vec<String> = picks
+        .iter()
+        .filter_map(|p| match p {
+            Pick::Unknown(name) => Some(format!("`{name}`")),
+            _ => None,
+        })
+        .collect();
+    let message = match names.as_slice() {
+        [] => return None,
+        [one] => format!("{one} is not a check in the config"),
+        many => format!("{} are not checks in the config", many.join(", ")),
+    };
+    Some(RunError::usage(message))
 }
 
 /// The `run` checks whose command has no `{files}`.

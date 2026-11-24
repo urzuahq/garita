@@ -7,6 +7,8 @@ use std::time::SystemTime;
 use garita_core::adapter::rebase;
 use garita_core::adapter::turbo::{clean_log, parse_summary};
 
+use crate::shown::shown;
+
 const RUNS: &str = ".turbo/runs";
 
 /// One task's output as its parser needs it.
@@ -30,6 +32,7 @@ pub fn snapshot(cwd: &Path) -> BTreeSet<OsString> {
 /// Reads the summary this run wrote and each task's log; `Err` says what is missing. Only a
 /// summary that holds a task `argv` names counts, so another check's turbo run is never read.
 pub fn read(
+    root: &Path,
     cwd: &Path,
     cwd_rel: &str,
     before: &BTreeSet<OsString>,
@@ -43,10 +46,10 @@ pub fn read(
         let text = fs::read_to_string(path).map_err(|e| {
             format!(
                 "could not read the turbo run summary {}: {e}",
-                path.display()
+                shown(root, path)
             )
         })?;
-        let summary = parse_summary(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let summary = parse_summary(&text).map_err(|e| format!("{}: {e}", shown(root, path)))?;
         let ours = summary
             .tasks
             .iter()
@@ -63,7 +66,10 @@ pub fn read(
             format!(" for {}", wanted.join(", "))
         };
         return Err(if summaries.is_empty() {
-            format!("turbo wrote no run summary{tasks} under {}", dir.display())
+            format!(
+                "turbo wrote no run summary{tasks} under {}",
+                shown(root, &dir)
+            )
         } else {
             format!("turbo's run summary holds no task{tasks}, so this check ran nothing")
         });
@@ -81,7 +87,7 @@ pub fn read(
                         format!(
                             "the log of {} at {} cannot be read: {e}",
                             task.task_id,
-                            path.display()
+                            shown(root, &path)
                         )
                     })?;
                     Some(clean_log(&log).to_string())

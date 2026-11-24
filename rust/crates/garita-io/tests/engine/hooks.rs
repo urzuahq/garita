@@ -5,19 +5,21 @@ use std::path::{Path, PathBuf};
 use garita_core::report::{Report, RunStatus, Severity, Trigger};
 use garita_io::hooks::{self, HOOKS, Kind};
 
-use crate::support::{Repo, assert_contract, finding, git_in, run_rules};
+use crate::support::{Repo, assert_contract, assert_relative, finding, git_in, run_rules};
 
 const CONFIG: &str = "schema_version: 1\nchecks: {}\n";
 
 fn install(dir: &Path, replace: bool) -> Report {
     let v = hooks::install(dir, replace);
     assert_contract(&v.report);
+    assert_relative(&v.report, dir);
     v.report
 }
 
 fn uninstall(dir: &Path) -> Report {
     let v = hooks::uninstall(dir);
     assert_contract(&v.report);
+    assert_relative(&v.report, dir);
     v.report
 }
 
@@ -363,5 +365,72 @@ fn uninstall_removes_garitas_hooks_and_leaves_a_foreign_one() {
     assert_eq!(
         fs::read_to_string(dir.join("pre-push")).unwrap(),
         "#!/bin/sh\nnpm test\n"
+    );
+}
+
+#[test]
+fn install_findings_name_the_hooks_relative_to_the_repository() {
+    let repo = configured();
+    let report = install(&repo.root(), false);
+    let messages: Vec<&str> = report.findings.iter().map(|f| f.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "installed .git/hooks/pre-commit",
+            "installed .git/hooks/pre-push"
+        ]
+    );
+}
+
+#[test]
+fn a_hooks_directory_outside_the_repository_is_named_in_full() {
+    let repo = configured();
+    let dir = repo.base().join("shared-hooks");
+    repo.git(&["config", "core.hooksPath", dir.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    let message = &finding(&report, "hooks-dir-shared").message;
+    assert!(
+        message.starts_with(&format!("{} (core.hooksPath)", dir.display())),
+        "{message}"
+    );
+}
+
+fn messages(report: &Report) -> Vec<&str> {
+    report.findings.iter().map(|f| f.message.as_str()).collect()
+}
+
+#[test]
+fn a_hooks_path_through_a_symlink_to_the_repository_is_named_relative() {
+    let repo = configured();
+    let link = repo.base().join("r4link");
+    symlink(repo.root(), &link).unwrap();
+    let dir = link.join(".hk");
+    repo.git(&["config", "core.hooksPath", dir.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    assert_eq!(
+        messages(&report),
+        ["installed .hk/pre-commit", "installed .hk/pre-push"]
+    );
+    assert_installed(&repo.root().join(".hk"));
+}
+
+#[test]
+fn dot_dot_components_are_resolved_before_a_path_is_named() {
+    let repo = configured();
+    let inside = repo.root().join("sub/../.hh");
+    repo.git(&["config", "core.hooksPath", inside.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    assert_eq!(
+        messages(&report),
+        ["installed .hh/pre-commit", "installed .hh/pre-push"]
+    );
+    let outside = repo.root().join("sub/../../outside/h5");
+    repo.git(&["config", "core.hooksPath", outside.to_str().unwrap()]);
+    let report = install(&repo.root(), false);
+    let message = &finding(&report, "hooks-dir-shared").message;
+    let expected = repo.base().join("outside/h5");
+    assert!(
+        message.starts_with(&format!("{} (core.hooksPath)", expected.display())),
+        "{message}"
     );
 }
