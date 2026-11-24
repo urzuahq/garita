@@ -24,6 +24,12 @@ fn within_root_names_inside_paths_relative_and_keeps_outside_ones() {
     );
     assert_eq!(shown("/work/repo"), ".");
     assert_eq!(shown("/work/repo2/x"), "/work/repo2/x");
+    assert_eq!(shown("/work/repo2"), "/work/repo2");
+    assert_eq!(shown("/work/repo/../x"), "/work/x");
+    assert_eq!(shown("/work/repo/sub/../../outside"), "/work/outside");
+    assert_eq!(shown("/work/repo/sub/../.hh/f"), ".hh/f");
+    assert_eq!(shown("/work/repo/./a"), "a");
+    assert_eq!(shown("/work/repo/."), ".");
     assert_eq!(shown("/elsewhere/hooks"), "/elsewhere/hooks");
 }
 

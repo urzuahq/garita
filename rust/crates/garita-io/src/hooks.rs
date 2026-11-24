@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use garita_core::adapter::within_root;
+use crate::shown::shown;
 use garita_core::report::{Examined, Finding, RunError, Severity, Trigger};
 
 use crate::config_file;
@@ -272,11 +272,8 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         Ok(true) => {}
         Ok(false) => {
             let shown = match git::hooks_path_set(&root) {
-                Ok(true) => format!("{} (core.hooksPath)", within_root(&root, &hooks)),
-                Ok(false) => format!(
-                    "{}, where .git/hooks resolves to,",
-                    within_root(&root, &hooks)
-                ),
+                Ok(true) => format!("{} (core.hooksPath)", shown(&root, &hooks)),
+                Ok(false) => format!("{}, where .git/hooks resolves to,", shown(&root, &hooks)),
                 Err(e) => return cannot(e.to_string()),
             };
             let (severity, message) = if replace {
@@ -305,7 +302,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => {
-                return cannot(format!("could not read {}: {e}", within_root(&root, &path)));
+                return cannot(format!("could not read {}: {e}", shown(&root, &path)));
             }
         };
         let step = plan(&root, &file, name, trigger, replace);
@@ -333,12 +330,12 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             } => {
                 let prior = Prior::read(&path);
                 if let Err(e) = write_hook(&hooks, &path, script(name, trigger).as_bytes(), 0o755) {
-                    let mut error = format!("could not write {}: {e}", within_root(&root, &path));
+                    let mut error = format!("could not write {}: {e}", shown(&root, &path));
                     for (path, prior) in written.iter().rev() {
                         if let Err(e) = prior.restore(&hooks, path) {
                             error.push_str(&format!(
                                 "; could not restore {}: {e}",
-                                within_root(&root, path)
+                                shown(&root, path)
                             ));
                         }
                     }
@@ -360,7 +357,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
 }
 
 fn plan(root: &Path, file: &HookFile, name: &'static str, trigger: Trigger, replace: bool) -> Step {
-    let shown = within_root(root, &file.path);
+    let shown = shown(root, &file.path);
     let write = |rule: &str, message: String| Step::Write {
         name,
         trigger,
@@ -508,7 +505,7 @@ pub fn uninstall(dir: &Path) -> Verdict {
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
         let path = hooks.join(name);
-        let shown = within_root(&root, &path);
+        let shown = shown(&root, &path);
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => return cannot(format!("could not read {shown}: {e}")),

@@ -4,8 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use garita_core::adapter::rebase;
 use garita_core::adapter::turbo::{clean_log, parse_summary};
-use garita_core::adapter::{rebase, within_root};
+
+use crate::shown::shown;
 
 const RUNS: &str = ".turbo/runs";
 
@@ -44,11 +46,10 @@ pub fn read(
         let text = fs::read_to_string(path).map_err(|e| {
             format!(
                 "could not read the turbo run summary {}: {e}",
-                within_root(root, path)
+                shown(root, path)
             )
         })?;
-        let summary =
-            parse_summary(&text).map_err(|e| format!("{}: {e}", within_root(root, path)))?;
+        let summary = parse_summary(&text).map_err(|e| format!("{}: {e}", shown(root, path)))?;
         let ours = summary
             .tasks
             .iter()
@@ -67,7 +68,7 @@ pub fn read(
         return Err(if summaries.is_empty() {
             format!(
                 "turbo wrote no run summary{tasks} under {}",
-                within_root(root, &dir)
+                shown(root, &dir)
             )
         } else {
             format!("turbo's run summary holds no task{tasks}, so this check ran nothing")
@@ -86,7 +87,7 @@ pub fn read(
                         format!(
                             "the log of {} at {} cannot be read: {e}",
                             task.task_id,
-                            within_root(root, &path)
+                            shown(root, &path)
                         )
                     })?;
                     Some(clean_log(&log).to_string())

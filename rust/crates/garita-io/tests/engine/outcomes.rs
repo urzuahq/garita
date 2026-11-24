@@ -680,3 +680,13 @@ fn min_severity_never_hides_garitas_own_findings() {
     let f = finding(&out.report, "budget");
     assert_eq!(f.severity, Severity::Warning);
 }
+
+#[test]
+fn a_git_failure_names_the_repository_files_relative_to_it() {
+    let repo = exit_tool_repo(&[("ok", "exit 0")]);
+    std::fs::write(repo.root().join(".git/index"), "junk\n").unwrap();
+    let out = repo.run();
+    let error = out.report.error.as_deref().unwrap();
+    assert!(error.contains("failed"), "{error}");
+    assert!(error.contains(" .git/garita-index-"), "{error}");
+}

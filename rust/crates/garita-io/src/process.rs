@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use garita_core::adapter::within_root;
+use crate::shown::shown;
 use thiserror::Error;
 
 pub const DEFAULT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
@@ -49,7 +49,7 @@ impl Invocation {
 
     fn shown(&self, path: &Path) -> String {
         match &self.root {
-            Some(root) => within_root(root, path),
+            Some(root) => shown(root, path),
             None => path.display().to_string(),
         }
     }

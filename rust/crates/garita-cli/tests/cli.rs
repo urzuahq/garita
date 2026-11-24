@@ -415,3 +415,14 @@ fn describe_prints_the_golden_and_nothing_else() {
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(without_version(printed), golden);
 }
+
+#[test]
+fn a_git_failure_does_not_name_the_repository_path() {
+    let t = Temp::new();
+    lint_repo(&t);
+    fs::write(t.repo().join(".git/index"), "junk\n").unwrap();
+    let out = garita(&t.repo(), &["run"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::NotRun);
+    assert!(report.error.unwrap().contains(" .git/garita-index-"));
+}

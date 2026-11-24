@@ -6,8 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use crate::shown::{shown, without_root};
 use garita_core::ObjectId;
-use garita_core::adapter::within_root;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -65,10 +65,15 @@ fn command(root: &Path) -> Command {
 /// Runs git, returning how to describe the call alongside its output.
 fn output(mut cmd: Command) -> Result<(String, Output), GitError> {
     let desc = describe(&cmd);
-    let out = cmd.output().map_err(|e| match e.kind() {
+    let root = cmd.get_args().nth(1).map(PathBuf::from);
+    let mut out = cmd.output().map_err(|e| match e.kind() {
         io::ErrorKind::NotFound => GitError::GitMissing,
         _ => GitError::Spawn(e),
     })?;
+    if let Some(root) = root {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        out.stderr = without_root(&root, &stderr).into_bytes();
+    }
     Ok((desc, out))
 }
 
@@ -351,7 +356,7 @@ impl TempIndex {
             Err(source) => Err(source),
         };
         copied.map_err(|source| GitError::TempIndex {
-            path: within_root(root, &temp.path),
+            path: shown(root, &temp.path),
             source,
         })?;
         Ok(temp)

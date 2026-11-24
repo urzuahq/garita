@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// Joins a tool's cwd-relative `path` onto `cwd` (repository-relative), giving a
 /// repository-relative path with `/` separators and no `.` segments. Absolute paths are only
@@ -29,9 +29,16 @@ pub fn rebase(cwd: &str, path: &str) -> String {
 }
 
 /// `path` written relative to the repository `root` with `/` separators (`.` for the root
-/// itself) when it lies inside it, and as given when it does not.
+/// itself) when it lies inside it, and as its normalised absolute path when it does not. `.` and
+/// `..` components are resolved lexically; a relative `path` is taken to be relative to `root`.
 pub fn within_root(root: &Path, path: &Path) -> String {
-    match path.strip_prefix(root) {
+    let root = normalise(root);
+    let full = if path.is_absolute() {
+        normalise(path)
+    } else {
+        normalise(&root.join(path))
+    };
+    match full.strip_prefix(&root) {
         Ok(rest) => {
             let parts: Vec<_> = rest
                 .components()
@@ -43,8 +50,22 @@ pub fn within_root(root: &Path, path: &Path) -> String {
                 parts.join("/")
             }
         }
-        Err(_) => path.display().to_string(),
+        Err(_) => full.display().to_string(),
     }
+}
+
+fn normalise(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 fn is_absolute(path: &str) -> bool {

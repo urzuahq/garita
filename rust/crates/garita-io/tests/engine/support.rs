@@ -220,7 +220,13 @@ pub fn replay_body(case: &str) -> String {
 
 /// Neither `error` nor a message garita wrote names `root`'s absolute path.
 pub fn assert_relative(report: &Report, root: &Path) {
-    let root = root.to_str().unwrap();
+    let real = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    for root in [root, real.as_path()] {
+        assert_relative_to(report, root.to_str().unwrap());
+    }
+}
+
+fn assert_relative_to(report: &Report, root: &str) {
     let error = report.error.as_deref().unwrap_or_default();
     assert!(!error.contains(root), "{error}");
     for f in report

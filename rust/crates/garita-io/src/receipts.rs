@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use garita_core::adapter::within_root;
+use crate::shown::shown;
 use garita_core::receipt::{Receipt, ReceiptNameError, file_name};
 use garita_core::report::{CheckStatus, Trigger};
 use thiserror::Error;
@@ -32,13 +32,13 @@ pub enum ReceiptsError {
 
 fn io_err<'a>(root: &'a Path, path: &'a Path) -> impl FnOnce(io::Error) -> ReceiptsError + 'a {
     move |source| ReceiptsError::Io {
-        path: within_root(root, path),
+        path: shown(root, path),
         source,
     }
 }
 
 fn outside(root: &Path, path: &Path) -> ReceiptsError {
-    ReceiptsError::OutsideRepository(within_root(root, path))
+    ReceiptsError::OutsideRepository(shown(root, path))
 }
 
 /// A receipt read from the store.
