@@ -1,5 +1,5 @@
 ---
-default: minor
+default: major
 ---
 
 garita describes its commands, and its reports follow the agent CLI contract's run profile.

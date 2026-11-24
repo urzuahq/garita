@@ -1,5 +1,5 @@
 ---
-default: minor
+default: major
 ---
 
 garita declares its inputs, gives each next command as arguments, and keeps a check's output out of its findings.
