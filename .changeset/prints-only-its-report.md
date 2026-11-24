@@ -1,5 +1,5 @@
 ---
-default: minor
+default: major
 ---
 
 garita prints nothing but its report.
