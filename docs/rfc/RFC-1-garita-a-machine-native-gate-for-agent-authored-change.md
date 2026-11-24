@@ -343,11 +343,14 @@ What garita does with the report:
 - **Suppression.** A check's `min_severity` (§3) decides what is counted in its `suppressed`.
 - **Which kind a `not-run` is.** A command line garita cannot read is `usage`. A config that is
   missing, unreadable, invalid or asks for another garita is `config`. A directory that is not a
-  git repository, a tool that cannot be started and receipts that cannot be stored are
-  `environment`. A failure inside garita is `internal`.
+  git repository and a tool that cannot be started are `environment`. Receipts that cannot be
+  stored do not stop a run: it keeps its verdict and gains a `receipt-unwritten` finding at
+  `info`. A failure inside garita is `internal`.
 - **A check's output.** `output` names the file holding everything the check's command printed,
   kept beside the receipt. `output_tail` is its end, printed for a check that failed, warned or
-  could not run. A finding's message for a failed command is one sentence and holds none of it.
+  could not run, with control characters other than newline and tab replaced; the file is the
+  raw output. A finding's message for a failed command is one sentence and holds none of it. When
+  the file cannot be written, `output` is left out and the tail is still printed.
 - **What `garita describe` declares.** It prints the object agent-cli-kit RFC-1 §3 and RFC-4 define.
   It declares `run`, `doctor`, `hooks install` and `hooks uninstall`, each with profile `run`,
   including the three that select no checks, and each one's arguments. `run` declares the
@@ -366,7 +369,8 @@ the shared contract promises.
   Only a check is ever named as a check to re-run: an error that belongs to the run, such as a
   trigger over its budget, re-runs the whole trigger. When the run is `not-run` it is
   `garita doctor`, or `garita describe` after a usage error. It is `null` on `pass` and `warn`,
-  and always `null` from `doctor` and the `hooks` commands, whose findings say what to change.
+  and `null` from the `hooks` commands and from `doctor`, whose findings say what to change, except
+  that `doctor` gives `garita hooks install` when that one command is the whole repair.
   `next_action_reason` is a count of what failed, such as `1 error in 1 check`.
 - **`fingerprint`.** An opaque string, stable across runs for the same finding. How garita computes
   it is its own, and a reader must not parse it.

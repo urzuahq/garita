@@ -25,6 +25,11 @@ if [ -z "$kit" ]; then
   git -C "$kit" fetch -q --depth 1 https://github.com/urzuahq/agent-cli-kit.git "$commit"
   git -C "$kit" checkout -q FETCH_HEAD
 fi
+head="$(git -C "$kit" rev-parse HEAD 2>/dev/null || true)"
+if [ "$head" != "$commit" ]; then
+  echo "conform.sh: $kit is at ${head:-no commit}, not the pinned $commit" >&2
+  exit 2
+fi
 
 repo="$work/repo"
 mkdir -p "$repo/.garita" "$work/bin"

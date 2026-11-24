@@ -14,9 +14,9 @@ use super::turbo::{self, TaskLog};
 use crate::process::{self, Invocation, Outcome};
 use crate::receipts;
 
-const TAIL_BYTES: u64 = 64 * 1024;
-/// Where output goes when the receipt store cannot hold it; the verdict does not depend on it.
+/// Where output goes when not even a scratch file can hold it; the verdict does not depend on it.
 const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+const TAIL_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct UnitRun {
@@ -113,20 +113,16 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
     let clock = Instant::now();
     let name = &plan.check.name;
     let main = receipts::output_path(root, run_id, name).ok();
+    let scratch = main.is_none().then(|| Scratch::new(run_id, name));
     let mut runs = Vec::new();
     let mut parts = Vec::new();
     for (i, unit) in plan.units.iter().enumerate() {
         let path = match (&main, plan.units.len()) {
             (Some(main), 1) => Some(main.clone()),
             (Some(_), _) => receipts::output_path(root, run_id, &format!("{name}.part{i}")).ok(),
-            (None, _) => None,
+            (None, _) => scratch.as_ref().and_then(|s| s.file(i)),
         };
-        let run = run_unit(
-            root,
-            plan,
-            unit,
-            path.as_deref().unwrap_or(Path::new(NULL_DEVICE)),
-        );
+        let run = run_unit(root, plan, unit, path.as_deref());
         if let Some(path) = path {
             parts.push((unit, path));
         }
@@ -140,7 +136,10 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
     let output = main;
     let tail = match parts.len() {
         0 => String::new(),
-        1 => output.as_deref().map(read_tail).unwrap_or_default(),
+        1 => parts
+            .first()
+            .map(|(_, path)| read_tail(path))
+            .unwrap_or_default(),
         n => {
             let failed = runs.iter().position(|r| !succeeded(&r.outcome));
             parts
@@ -149,6 +148,7 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
                 .unwrap_or_default()
         }
     };
+    drop(scratch);
     if let (Some(main), true) = (&output, parts.len() > 1) {
         if let Err(e) = join_parts(main, &parts) {
             let reason = format!("could not join the output of {name}: {e}");
@@ -177,10 +177,46 @@ fn succeeded(outcome: &Result<Outcome, RunError>) -> bool {
     matches!(outcome, Ok(Outcome::Ran(f)) if f.exit_code == Some(0))
 }
 
-fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: &Path) -> UnitRun {
+/// A private directory in the system temp dir, removed when dropped, that holds a check's output
+/// when the receipt store cannot, so its tail can still be read.
+struct Scratch(Option<PathBuf>);
+
+impl Scratch {
+    fn new(run_id: &str, name: &str) -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "garita-{}-{run_id}-{}-{name}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        Self(builder.create(&dir).ok().map(|()| dir))
+    }
+
+    fn file(&self, unit: usize) -> Option<PathBuf> {
+        self.0.as_ref().map(|dir| dir.join(format!("{unit}.log")))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.0 {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+}
+
+fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: Option<&Path>) -> UnitRun {
     let cwd = root.join(&unit.cwd);
     let before = plan.turbo.then(|| turbo::snapshot(&cwd));
-    let mut invocation = Invocation::new(unit.argv.clone(), &cwd, plan.timeout, output);
+    let mut invocation = Invocation::new(
+        unit.argv.clone(),
+        &cwd,
+        plan.timeout,
+        output.unwrap_or(Path::new(NULL_DEVICE)),
+    );
     invocation.env.clone_from(&plan.env);
     let outcome = process::run(&invocation).map_err(|e| RunError::environment(e.to_string()));
     let turbo = match (&outcome, before) {
@@ -220,7 +256,7 @@ fn join_parts(main: &Path, parts: &[(&Unit, PathBuf)]) -> io::Result<()> {
     out.flush()
 }
 
-/// The last characters of a file, as the receipt's `output_tail`.
+/// The last characters of a file, as the receipt's `output_tail`, with control characters replaced.
 pub fn read_tail(path: &Path) -> String {
     let read = || -> io::Result<String> {
         let mut file = File::open(path)?;
@@ -231,6 +267,6 @@ pub fn read_tail(path: &Path) -> String {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     };
     read()
-        .map(|text| garita_core::receipt::output_tail(&text).to_string())
+        .map(|text| garita_core::adapter::sanitize(garita_core::receipt::output_tail(&text)))
         .unwrap_or_default()
 }
