@@ -123,7 +123,7 @@ fn oxlint_rebases_and_fixes() {
     let finding = &parsed.findings[0];
     assert_eq!(finding.file.as_deref(), Some("packages/app/src/my file.ts"));
     assert_eq!(
-        finding.fix.as_deref(),
+        finding.fix.as_deref().map(crate::argv::join).as_deref(),
         Some("oxlint --fix 'packages/app/src/my file.ts'")
     );
     assert_eq!(finding.line, None);
@@ -176,13 +176,15 @@ fn every_parser_crashes_when_killed() {
 }
 
 #[test]
-fn unrecognized_message_keeps_a_clipped_tail() {
-    let stdout = format!("{}\nlast words\n", "é".repeat(1_000_000));
+fn unrecognized_output_is_one_sentence_with_its_reason_picked_out() {
+    let stdout = format!("{}\nerror: last words\n", "é".repeat(1_000_000));
     let parsed = run(Adapter::Tsc, &stdout, "", Some(2));
     assert_unrecognized(&parsed, "tsc", 2);
-    let message = &parsed.findings[0].message;
-    assert!(message.ends_with("\nlast words"), "{message}");
-    assert!(message.len() < 400, "{}", message.len());
+    assert_eq!(
+        parsed.findings[0].message,
+        "tsc exited with code 2 with output garita does not recognise"
+    );
+    assert_eq!(parsed.notable, ["error: last words"]);
 }
 
 #[test]
@@ -326,17 +328,32 @@ fn fix_commands_guard_a_leading_dash() {
     let lint = run(Adapter::Oxlint, json, "", Some(1));
     assert_eq!(lint.findings[0].file.as_deref(), Some("-rf.ts"));
     assert_eq!(
-        lint.findings[0].fix.as_deref(),
+        lint.findings[0]
+            .fix
+            .as_deref()
+            .map(crate::argv::join)
+            .as_deref(),
         Some("oxlint --fix ./-rf.ts")
     );
     let format = run(Adapter::Oxfmt, "--write me.ts\n", "", Some(1));
     assert_eq!(format.findings[0].file.as_deref(), Some("--write me.ts"));
     assert_eq!(
-        format.findings[0].fix.as_deref(),
+        format.findings[0]
+            .fix
+            .as_deref()
+            .map(crate::argv::join)
+            .as_deref(),
         Some("oxfmt './--write me.ts'")
     );
     let inside = run(Adapter::Oxfmt, "src/-a.ts\n", "", Some(1));
-    assert_eq!(inside.findings[0].fix.as_deref(), Some("oxfmt src/-a.ts"));
+    assert_eq!(
+        inside.findings[0]
+            .fix
+            .as_deref()
+            .map(crate::argv::join)
+            .as_deref(),
+        Some("oxfmt src/-a.ts")
+    );
 }
 
 #[test]
@@ -361,7 +378,11 @@ fn oxfmt_duration_and_counts() {
         .collect();
     assert_eq!(files, ["src/a (copy).ts", "src/b c.ts"]);
     assert_eq!(
-        parsed.findings[1].fix.as_deref(),
+        parsed.findings[1]
+            .fix
+            .as_deref()
+            .map(crate::argv::join)
+            .as_deref(),
         Some("oxfmt 'src/b c.ts'")
     );
     assert_eq!(parsed.examined.get(FILES), Some(&1));
@@ -566,10 +587,10 @@ fn exit_code_outcomes() {
     assert_eq!(finding.rule, "exit-code/failed");
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.file, None);
-    assert_eq!(
-        finding.message,
-        "exited with code 3:\nstderr:\nerr 1\nstdout:\nout 1\nout 2"
-    );
+    assert_eq!(finding.message, "exited with code 3");
+    assert!(fail.notable.is_empty());
+    let reason = run(Adapter::ExitCode, "error: bad input\n", "", Some(1));
+    assert_eq!(reason.notable, ["error: bad input"]);
     let silent = run(Adapter::ExitCode, "", "\n\n", Some(1));
     assert_eq!(
         silent.findings[0].message,
@@ -578,14 +599,10 @@ fn exit_code_outcomes() {
 }
 
 #[test]
-fn exit_code_tail_is_capped() {
-    let many: String = (0..100).map(|i| format!("line {i}\r\n")).collect();
-    let tail = exit_code::tail("", &many);
-    assert_eq!(tail.lines().count(), 10);
-    assert!(tail.starts_with("line 90\n") && tail.ends_with("line 99"));
-    let wide = "é".repeat(3_000_000);
-    let tail = exit_code::tail(&wide, "");
-    assert!(tail.len() <= 4000 && tail.chars().all(|c| c == 'é'));
+fn exit_code_notable_lines_are_capped() {
+    let wide = format!("error: {}", "é".repeat(3_000_000));
+    let notable = exit_code::notable(&wide, "");
+    assert!(notable.iter().all(|l| l.len() <= 300));
     let output = ToolOutput {
         stdout: "",
         stderr: "boom",

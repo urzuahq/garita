@@ -1,6 +1,56 @@
 {
+  "args": [],
   "commands": [
     {
+      "args": [
+        {
+          "kind": "option",
+          "means": "Where the run happens, which picks its scope and checks; commit when left out.",
+          "name": "--trigger",
+          "repeatable": false,
+          "required": false,
+          "type": "string",
+          "values": [
+            "commit",
+            "push",
+            "ci",
+            "merge"
+          ]
+        },
+        {
+          "kind": "option",
+          "means": "The git ref a change is measured against.",
+          "name": "--base",
+          "repeatable": false,
+          "required": false,
+          "type": "string"
+        },
+        {
+          "kind": "option",
+          "means": "Repository-relative files that replace the trigger's scope; it takes several values.",
+          "name": "--files",
+          "repeatable": true,
+          "required": false,
+          "type": "path"
+        },
+        {
+          "kind": "positional",
+          "means": "Names of checks in the config to run, in place of the trigger's checks.",
+          "name": "checks",
+          "repeatable": true,
+          "required": false,
+          "type": "string"
+        },
+        {
+          "after_separator": true,
+          "kind": "positional",
+          "means": "More files for --files, such as ones that begin with a dash.",
+          "name": "files",
+          "repeatable": true,
+          "required": false,
+          "type": "path"
+        }
+      ],
       "metrics": [
         "duration_ms",
         "files"
@@ -10,31 +60,59 @@
       "safe": false,
       "scopes": [
         "base-ref"
-      ]
+      ],
+      "stdin": null
     },
     {
+      "args": [],
       "metrics": [],
       "name": "doctor",
       "profile": "run",
       "safe": true,
-      "scopes": []
+      "scopes": [],
+      "stdin": null
     },
     {
+      "args": [
+        {
+          "kind": "flag",
+          "means": "Overwrite a hook that is not garita's, a symlinked one, or one in a hooks directory outside the repository.",
+          "name": "--replace",
+          "repeatable": false,
+          "required": false
+        }
+      ],
       "metrics": [],
       "name": "hooks install",
       "profile": "run",
       "safe": false,
-      "scopes": []
+      "scopes": [],
+      "stdin": null
     },
     {
+      "args": [],
       "metrics": [],
       "name": "hooks uninstall",
       "profile": "run",
       "safe": false,
-      "scopes": []
+      "scopes": [],
+      "stdin": null
+    }
+  ],
+  "config": [
+    {
+      "format": "yaml",
+      "path": ".garita/config.yaml"
     }
   ],
   "contract_version": "1.1",
+  "env": [
+    {
+      "means": "Names the machine in a receipt when the system's own host name cannot be read.",
+      "name": "HOSTNAME"
+    }
+  ],
+  "log": null,
   "name": "garita",
   "system": 0,
   "version": "0.0.0"

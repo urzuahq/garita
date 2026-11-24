@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use garita_core::argv::quote;
+use garita_core::report::RunError;
 
 use super::plan::{Plan, Unit};
 use super::turbo::{self, TaskLog};
@@ -21,7 +22,7 @@ const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 pub struct UnitRun {
     pub unit: Unit,
     /// `Err` when garita itself failed around the tool.
-    pub outcome: Result<Outcome, String>,
+    pub outcome: Result<Outcome, RunError>,
     pub turbo: Option<Result<Vec<TaskLog>, String>>,
 }
 
@@ -94,7 +95,9 @@ fn lost() -> Executed {
                 cwd: String::new(),
                 files: 0,
             },
-            outcome: Err("the worker running this check stopped without a result".to_string()),
+            outcome: Err(RunError::internal(
+                "the worker running this check stopped without a result",
+            )),
             turbo: None,
         }],
         started: now,
@@ -155,7 +158,7 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
                     cwd: String::new(),
                     files: 0,
                 },
-                outcome: Err(reason),
+                outcome: Err(RunError::environment(reason)),
                 turbo: None,
             });
         }
@@ -170,7 +173,7 @@ fn execute(root: &Path, run_id: &str, plan: &Plan<'_>) -> Executed {
     }
 }
 
-fn succeeded(outcome: &Result<Outcome, String>) -> bool {
+fn succeeded(outcome: &Result<Outcome, RunError>) -> bool {
     matches!(outcome, Ok(Outcome::Ran(f)) if f.exit_code == Some(0))
 }
 
@@ -179,7 +182,7 @@ fn run_unit(root: &Path, plan: &Plan<'_>, unit: &Unit, output: &Path) -> UnitRun
     let before = plan.turbo.then(|| turbo::snapshot(&cwd));
     let mut invocation = Invocation::new(unit.argv.clone(), &cwd, plan.timeout, output);
     invocation.env.clone_from(&plan.env);
-    let outcome = process::run(&invocation).map_err(|e| e.to_string());
+    let outcome = process::run(&invocation).map_err(|e| RunError::environment(e.to_string()));
     let turbo = match (&outcome, before) {
         (Ok(Outcome::Ran(_)), Some(before)) => {
             Some(turbo::read(&cwd, &unit.cwd, &before, &unit.argv))

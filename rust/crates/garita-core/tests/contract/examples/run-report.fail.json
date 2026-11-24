@@ -8,6 +8,7 @@
       },
       "kind": "lint",
       "name": "lint",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/lint.log",
       "rerun": "garita run lint",
       "status": "fail"
     },
@@ -18,6 +19,7 @@
       },
       "kind": "types",
       "name": "types",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/types.log",
       "rerun": "garita run types",
       "status": "pass"
     }
@@ -49,6 +51,16 @@
     }
   ],
   "next_action": "garita run --trigger push lint --files src/app.ts src/util.ts",
+  "next_action_argv": [
+    "garita",
+    "run",
+    "--trigger",
+    "push",
+    "lint",
+    "--files",
+    "src/app.ts",
+    "src/util.ts"
+  ],
   "next_action_inputs": [],
   "next_action_reason": "2 errors in 1 check",
   "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",

@@ -117,7 +117,7 @@ fn finding(d: Diagnostic, cwd: &str) -> ToolFinding {
         rule: rule(d.code.as_deref()),
         fix: file
             .as_deref()
-            .map(|f| format!("oxlint --fix {}", path_arg(f))),
+            .map(|f| vec!["oxlint".to_string(), "--fix".to_string(), path_arg(f)]),
         file,
         line: span.and_then(|s| nonzero(s.line)),
         column: span.and_then(|s| nonzero(s.column)),

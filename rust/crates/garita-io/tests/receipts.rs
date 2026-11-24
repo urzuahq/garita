@@ -8,7 +8,7 @@ use std::path::Path;
 use common::{TempDir, init, write};
 use garita_core::receipt::{RECEIPT_VERSION, Receipt, ReceiptCheck, ResultWord, Tool};
 use garita_core::report::{
-    CheckKind, CheckStatus, Examined, Report, RunContext, Scope, ScopeKind, Trigger,
+    CheckKind, CheckStatus, Examined, Report, RunContext, RunError, Scope, ScopeKind, Trigger,
 };
 use garita_io::{clock, receipts};
 
@@ -56,7 +56,7 @@ fn receipt(minute: u32, trigger: Trigger, checks: Vec<ReceiptCheck>) -> Receipt 
         },
         result: ResultWord::Passed,
         checks,
-        report: Report::not_run(RunContext::default(), "x".into()),
+        report: Report::not_run(RunContext::default(), RunError::environment("x")),
     }
 }
 

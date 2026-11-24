@@ -5,7 +5,7 @@ use std::num::NonZeroU64;
 
 use thiserror::Error;
 
-use crate::argv::quote;
+use crate::argv::join;
 use crate::report::{CheckKind, Examined, Finding, Severity};
 
 mod exit_code;
@@ -18,7 +18,7 @@ mod path;
 mod tsc;
 pub mod turbo;
 
-pub use exit_code::{is_noise, is_notable, sanitize, tail as output_tail};
+pub use exit_code::{is_noise, is_notable, last_lines, notable, printed_nothing, sanitize};
 pub use fingerprint::fingerprint;
 pub use invoke::complete_turbo_argv;
 pub use path::rebase;
@@ -84,7 +84,8 @@ pub struct ToolFinding {
     pub line: Option<NonZeroU64>,
     pub column: Option<NonZeroU64>,
     pub message: String,
-    pub fix: Option<String>,
+    /// The command that fixes it, as its arguments.
+    pub fix: Option<Vec<String>>,
 }
 
 impl ToolFinding {
@@ -111,7 +112,8 @@ impl ToolFinding {
             line: self.line,
             column: self.column,
             message: self.message,
-            fix: self.fix,
+            fix: self.fix.as_deref().map(join),
+            fix_argv: self.fix,
             fingerprint,
         }
     }
@@ -122,6 +124,8 @@ pub struct Parsed {
     pub outcome: Outcome,
     pub findings: Vec<ToolFinding>,
     pub examined: Examined,
+    /// Lines of a failing output that look like its reason.
+    pub notable: Vec<String>,
 }
 
 impl Parsed {
@@ -130,6 +134,7 @@ impl Parsed {
             outcome: Outcome::crashed(reason),
             findings: Vec::new(),
             examined: Examined::new(),
+            notable: Vec::new(),
         }
     }
 
@@ -139,11 +144,10 @@ impl Parsed {
 
     /// A non-zero exit the parser could not read still blocks: the tool gave its own verdict.
     fn unrecognized(tool: &str, exit: i32, output: &ToolOutput<'_>) -> Self {
-        let tail = exit_code::tail(output.stderr, output.stdout);
-        let message = if tail.is_empty() {
+        let message = if printed_nothing(output.stderr, output.stdout) {
             format!("{tool} exited with code {exit} and printed nothing")
         } else {
-            format!("{tool} exited with code {exit} with output garita does not recognise:\n{tail}")
+            format!("{tool} exited with code {exit} with output garita does not recognise")
         };
         Self {
             outcome: Outcome::Findings,
@@ -157,6 +161,7 @@ impl Parsed {
                 fix: None,
             }],
             examined: Examined::new(),
+            notable: notable(output.stderr, output.stdout),
         }
     }
 
@@ -194,6 +199,7 @@ impl Parsed {
             outcome,
             findings,
             examined: examined_files(files),
+            notable: Vec::new(),
         }
     }
 }
@@ -218,9 +224,9 @@ fn clip(text: &str) -> &str {
 /// A repository path as a command argument: `./` keeps a leading `-` from reading as an option.
 fn path_arg(file: &str) -> String {
     if file.starts_with('-') {
-        quote(&format!("./{file}"))
+        format!("./{file}")
     } else {
-        quote(file)
+        file.to_string()
     }
 }
 

@@ -8,6 +8,7 @@
       },
       "kind": "lint",
       "name": "lint",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/lint.log",
       "rerun": "garita run lint",
       "status": "pass"
     }
@@ -28,6 +29,7 @@
     }
   ],
   "next_action": null,
+  "next_action_argv": null,
   "next_action_inputs": [],
   "next_action_reason": null,
   "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use garita_core::describe::{CONTRACT_VERSION, describe};
 use garita_core::receipt::{RECEIPT_VERSION, Receipt, ReceiptCheck, ResultWord, Tool};
 use garita_core::report::{
-    CheckEntry, CheckKind, CheckStatus, Finding, Report, RunContext, Scope, ScopeKind, Severity,
-    Trigger,
+    CheckEntry, CheckKind, CheckStatus, Finding, Report, RunContext, RunError, Scope, ScopeKind,
+    Severity, Trigger,
 };
 
 const COMMIT: &str = "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62";
@@ -38,13 +38,11 @@ fn context(receipt: bool) -> RunContext {
 
 fn entry(name: &str, kind: CheckKind, status: CheckStatus, files: u64) -> CheckEntry {
     CheckEntry {
-        name: name.into(),
-        kind,
-        status,
         duration_ms: 412,
         examined: [("files".to_string(), files)].into(),
         rerun: Some(format!("garita run {name}")),
-        suppressed: Default::default(),
+        output: Some(format!(".garita/receipts/{RUN_ID}/{name}.log")),
+        ..CheckEntry::new(name, kind, status)
     }
 }
 
@@ -58,6 +56,7 @@ fn finding(check: &str, severity: Severity, file: Option<&str>, line: Option<u64
         column: line.and_then(|_| std::num::NonZeroU64::new(5)),
         message: "Unexpected `debugger` statement".into(),
         fix: None,
+        fix_argv: None,
         fingerprint: Some("5d1c0e9a".into()),
     }
 }
@@ -101,7 +100,7 @@ fn not_run_report() -> Report {
         trigger: Some(Trigger::Commit),
         ..RunContext::default()
     };
-    Report::not_run(context, "not a git repository".into())
+    Report::not_run(context, RunError::environment("not a git repository"))
 }
 
 fn mixed_not_run_report() -> Report {
@@ -135,6 +134,40 @@ fn no_location_report() -> Report {
     let checks = vec![entry("records", CheckKind::Records, CheckStatus::Fail, 4)];
     let findings = vec![finding("records", Severity::Error, None, None)];
     Report::from_run(context(true), checks, findings, None)
+}
+
+/// A failing exit-code check with its output on the check, and an unformatted file with a fix.
+fn fail_output_report() -> Report {
+    let records = CheckEntry {
+        output_tail: Some("checked 3 records\nerror: 0004-x.md has no status\n".into()),
+        output_notable: vec!["error: 0004-x.md has no status".into()],
+        ..entry("records", CheckKind::Records, CheckStatus::Fail, 3)
+    };
+    let format = CheckEntry {
+        output_tail: Some("src/[id]/page.tsx\n".into()),
+        ..entry("format", CheckKind::Format, CheckStatus::Fail, 38)
+    };
+    let failed = garita_core::adapter::ToolFinding {
+        severity: Severity::Error,
+        rule: "exit-code/failed".into(),
+        file: None,
+        line: None,
+        column: None,
+        message: "exited with code 1".into(),
+        fix: None,
+    };
+    let unformatted = garita_core::adapter::ToolFinding {
+        rule: "oxfmt/unformatted".into(),
+        file: Some("src/[id]/page.tsx".into()),
+        message: "File is not formatted".into(),
+        fix: Some(vec!["oxfmt".into(), "src/[id]/page.tsx".into()]),
+        ..failed.clone()
+    };
+    let findings = vec![
+        failed.into_finding("records"),
+        unformatted.into_finding("format"),
+    ];
+    Report::from_run(context(true), vec![records, format], findings, None)
 }
 
 fn receipt_check(
@@ -220,6 +253,7 @@ fn cases() -> Vec<(&'static str, serde_json::Value)> {
         ("run-report.not-run-no-start", json(not_run_report())),
         ("run-report.not-run-mixed", json(mixed_not_run_report())),
         ("run-report.finding-no-location", json(no_location_report())),
+        ("run-report.fail-output", json(fail_output_report())),
         ("describe.garita", json(describe("0.0.0"))),
         ("receipt.fail", json(fail_receipt)),
         ("receipt.not-run-mixed", json(mixed_receipt)),
@@ -233,6 +267,8 @@ const WRITTEN_BY_THE_CLI: &[&str] = &[
     "run-report.doctor-pass.json",
     "run-report.hooks-install.json",
     "run-report.hooks-uninstall.json",
+    "run-report.hook-missing-garita.json",
+    "run-report.usage-error.json",
 ];
 
 #[test]
@@ -317,6 +353,41 @@ fn a_finding_names_a_check_that_the_report_lists() {
                 seen += 1;
                 assert!(names.contains(&check), "{name}: {f}");
             }
+        }
+    }
+    assert!(seen > 0);
+}
+
+/// Whether garita wrote a finding's message itself, rather than passing on a tool's diagnostic.
+fn garitas_own(rule: &str) -> bool {
+    !rule.contains('/')
+        || rule.starts_with("doctor/")
+        || ["/unrecognized-output", "/failed", "/task-failed"]
+            .iter()
+            .any(|s| rule.ends_with(s))
+}
+
+#[test]
+fn no_golden_error_or_garita_message_has_a_newline() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/contract/examples");
+    let mut seen = 0;
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let report = value.get("report").unwrap_or(&value);
+        if let Some(error) = report.get("error").and_then(|e| e.as_str()) {
+            seen += 1;
+            assert!(!error.contains('\n'), "{}: {error}", path.display());
+        }
+        for f in report["findings"].as_array().into_iter().flatten() {
+            let rule = f["rule"].as_str().unwrap_or_default();
+            let message = f["message"].as_str().unwrap_or_default();
+            assert!(
+                !garitas_own(rule) || !message.contains('\n'),
+                "{}: {rule}: {message}",
+                path.display()
+            );
         }
     }
     assert!(seen > 0);

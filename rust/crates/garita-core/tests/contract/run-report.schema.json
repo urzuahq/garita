@@ -23,6 +23,8 @@
                 "additionalProperties": {"type": "integer", "minimum": 0}
               },
               "rerun": {"type": ["string", "null"]},
+              "output_tail": {"type": "string", "maxLength": 4000},
+              "output": {"type": "string", "minLength": 1},
               "suppressed": {
                 "description": "Findings left out of the verdict, as a count per severity.",
                 "type": "object",

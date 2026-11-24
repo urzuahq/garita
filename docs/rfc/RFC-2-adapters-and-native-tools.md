@@ -95,8 +95,8 @@ checks:
   from the output and never from the exit code alone. A crash is a tool that was killed or timed
   out, or one that exited zero with output its adapter expected to read and could not (RFC-1's
   `on_crash`). A tool that exited non-zero with output the adapter could not read is
-  not a crash: it is one finding at `error`, `<tool>/unrecognized-output`, carrying the lines of its
-  output that look like errors and the last lines of each stream. A new tool version that words
+  not a crash: it is one finding at `error`, `<tool>/unrecognized-output`, and the check's entry
+  carries the lines of its output that look like errors and the end of the output (RFC-1 §5). A new tool version that words
   something differently then blocks and says so, and never passes as a warning. A run over nothing
   is always a finding: a `no-op` warning when the tool exited zero, and an error when it did not.
   The oxlint adapter treats output it cannot read from a tool that exited zero as clean, since it
@@ -109,7 +109,7 @@ What the first adapters read, each settled from a recorded run:
 | oxlint | `--format json` | The report's `number_of_files` | Exit 1 covers findings, no files matched and a bad config alike. A bad config prints no JSON at all, and no files matched prints a line of prose before the JSON. The default format changes when the tool detects an agent, so the format is always passed |
 | oxfmt | `--check` | The file count in its closing line | Exit 0 formatted, 1 unformatted, 2 for an error or no files matched. Paths only, so a finding has a file and no line or rule |
 | tsc | `--pretty false` diagnostic lines | `--listFilesOnly`, leaving out the compiler's own library files | TypeScript 5.8 exits 1 or 2 for the same errors depending on build state, and the TypeScript 7 native compiler exits 1 where 5.8 exits 2, so only zero or non-zero means anything. Multi-line messages continue on indented lines. The two compilers print the same diagnostic lines |
-| `exit-code` | The exit code and the last lines of output | The files passed to it | The finding's message is the output tail |
+| `exit-code` | The exit code and the last lines of output | The files passed to it | The check's entry carries the end of the output |
 
 Paths in findings (oxlint's `filename`, oxfmt's listed files, tsc's diagnostic lines) are relative to
 the working directory, so a partitioned run rebases them from the root it ran in. Other output is

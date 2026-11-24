@@ -191,7 +191,10 @@ mod tests {
 
     #[test]
     fn serializes_every_field_the_schema_requires() {
-        let r = receipt(Report::not_run(RunContext::default(), "x".into()));
+        let r = receipt(Report::not_run(
+            RunContext::default(),
+            crate::report::RunError::environment("x"),
+        ));
         let value = serde_json::to_value(&r).unwrap();
         for key in [
             "receipt_version",

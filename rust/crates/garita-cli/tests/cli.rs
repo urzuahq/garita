@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use garita_core::report::{Report, RunStatus};
+use garita_core::argv::split;
+use garita_core::report::{ErrorKind, Report, RunStatus};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -63,6 +64,15 @@ fn garita(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// Whether garita wrote a finding's message itself, rather than passing on a tool's diagnostic.
+fn garitas_own(rule: &str) -> bool {
+    !rule.contains('/')
+        || rule.starts_with("doctor/")
+        || ["/unrecognized-output", "/failed", "/task-failed"]
+            .iter()
+            .any(|s| rule.ends_with(s))
+}
+
 /// stdout is exactly one JSON object and a newline; it is a report that keeps the contract.
 fn report_of(out: &Output) -> Report {
     let stdout = String::from_utf8(out.stdout.clone()).unwrap();
@@ -79,6 +89,24 @@ fn report_of(out: &Output) -> Report {
     );
     if report.status == RunStatus::NotRun {
         assert!(report.error.is_some());
+        assert!(report.error_kind.is_some());
+    }
+    match (&report.next_action, &report.next_action_argv) {
+        (None, None) => {}
+        (Some(action), Some(argv)) => assert_eq!(&split(action).unwrap(), argv),
+        other => panic!("next_action and next_action_argv disagree: {other:?}"),
+    }
+    assert!(
+        !report.error.as_deref().unwrap_or_default().contains('\n'),
+        "{:?}",
+        report.error
+    );
+    for f in &report.findings {
+        assert!(
+            !garitas_own(&f.rule) || !f.message.contains('\n'),
+            "{}",
+            f.message
+        );
     }
     assert_eq!(stderr(out), "", "stderr carries nothing but a diagnostic");
     for f in &report.findings {
@@ -187,9 +215,76 @@ fn a_usage_error_under_run_is_still_one_not_run_report() {
     let out = garita(&t.repo(), &["run", "--trigger", "lunch"]);
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(2));
+    assert_eq!(report.error_kind, Some(ErrorKind::Usage));
     let error = report.error.unwrap();
     assert!(error.contains("lunch"), "{error}");
     assert!(!error.starts_with("error:"), "{error}");
+    assert!(!error.contains("Usage") && !error.contains('\n'), "{error}");
+}
+
+#[test]
+fn a_top_level_usage_error_is_one_not_run_report_naming_the_argument() {
+    let t = Temp::new();
+    for (args, named) in [
+        (&[][..], "no command was given"),
+        (&["lunch"], "lunch"),
+        (&["--bogus"], "--bogus"),
+        (&["hooks"], "no command was given"),
+    ] {
+        let out = garita(&t.repo(), args);
+        let report = report_of(&out);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(report.error_kind, Some(ErrorKind::Usage), "{args:?}");
+        let error = report.error.unwrap();
+        assert!(error.contains(named), "{args:?}: {error}");
+        assert!(!error.contains("Usage") && !error.contains('\n'), "{error}");
+    }
+}
+
+#[test]
+fn a_usage_error_report_matches_its_golden() {
+    let t = Temp::new();
+    let out = garita(&t.repo(), &["--bogus"]);
+    report_of(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let text = format!("{}\n", serde_json::to_string_pretty(&value).unwrap());
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../garita-core/tests/contract/examples/run-report.usage-error.json");
+    if std::env::var("GARITA_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        fs::write(&path, &text).unwrap();
+    } else {
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+}
+
+#[test]
+fn a_failing_check_carries_its_output_on_the_check_and_one_sentence_in_the_finding() {
+    let t = Temp::new();
+    git(&t.repo(), &["init", "-q", "-b", "main"]);
+    let tool = t.tool(
+        "records",
+        "echo 'checked 3 records'; echo 'error: 0004-x.md has no status' >&2; exit 1",
+    );
+    t.write(".gitignore", ".garita/receipts/\n");
+    t.write(
+        ".garita/config.yaml",
+        &format!(
+            "schema_version: 1\nchecks:\n  records:\n    run: {tool}\n    parser: exit-code\n"
+        ),
+    );
+    let out = garita(&t.repo(), &["run"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::Fail);
+    let check = &report.checks[0];
+    let tail = check.output_tail.as_deref().unwrap();
+    assert!(
+        tail.contains("checked 3 records") && tail.contains("0004-x.md"),
+        "{tail}"
+    );
+    assert_eq!(check.output_notable, ["error: 0004-x.md has no status"]);
+    let output = check.output.as_deref().unwrap();
+    assert!(t.repo().join(output).is_file(), "{output}");
+    assert_eq!(report.findings[0].message, "exited with code 1");
 }
 
 #[test]

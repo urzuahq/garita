@@ -7,7 +7,7 @@ use garita_core::adapter::{Adapter, complete_turbo_argv};
 use garita_core::argv::{Command, Placeholder};
 use garita_core::config::{Check, CheckForm, Config};
 use garita_core::glob;
-use garita_core::report::{Finding, Severity, Trigger};
+use garita_core::report::{Finding, RunError, Severity, Trigger};
 
 use super::finding::{finding, plural};
 use super::scope::Resolved;
@@ -48,7 +48,7 @@ pub enum Planned<'a> {
     },
     NotRun {
         check: &'a Check,
-        reason: String,
+        reason: RunError,
     },
 }
 
@@ -63,7 +63,7 @@ pub fn plan<'a>(
         Ok(planned) => planned,
         Err(reason) => Planned::NotRun {
             check,
-            reason: format!("checks.{}: {reason}", check.name),
+            reason: RunError::config(format!("checks.{}: {reason}", check.name)),
         },
     }
 }

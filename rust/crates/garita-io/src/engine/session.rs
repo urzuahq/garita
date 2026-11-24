@@ -7,7 +7,9 @@ use garita_core::ObjectId;
 use garita_core::argv::Placeholder;
 use garita_core::config::{Check, CheckForm, Config, OnExceed, satisfies};
 use garita_core::receipt::file_name;
-use garita_core::report::{CheckKind, CheckStatus, Finding, Report, RunContext, Severity, Trigger};
+use garita_core::report::{
+    CheckKind, CheckStatus, Finding, Report, RunContext, RunError, Severity, Trigger,
+};
 
 use super::exec;
 use super::finding::{run_finding, seconds};
@@ -25,20 +27,20 @@ pub fn run(request: &Request, clock: &dyn Clock) -> Outcome {
     let trigger = request.trigger;
     let root = match git::root(&request.dir) {
         Ok(root) => root,
-        Err(e) => return Outcome::not_run(trigger, None, e.to_string()),
+        Err(e) => return Outcome::not_run(trigger, None, RunError::environment(e.to_string())),
     };
     let tree = tree_of(&root, trigger).ok();
     let loaded = match config_file::load(&root) {
         Ok(loaded) => loaded,
         Err(e) => {
             let tree = tree.map(|t| t.as_str().to_string());
-            return Outcome::not_run(trigger, tree, e.to_string());
+            return Outcome::not_run(trigger, tree, RunError::config(e.to_string()));
         }
     };
     let shown = tree.as_ref().map(|t| t.as_str().to_string());
     match Session::start(root, request, clock, loaded, tree) {
         Ok(session) => session.run(),
-        Err(e) => Outcome::not_run(trigger, shown, e),
+        Err(e) => Outcome::not_run(trigger, shown, RunError::environment(e)),
     }
 }
 
@@ -102,14 +104,11 @@ impl<'a> Session<'a> {
 
     fn run(self) -> Outcome {
         if let Some(error) = requires_error(&self.loaded.config, &self.request.version) {
-            return self.finish(None, Vec::new(), Some(error));
+            return self.finish(None, Vec::new(), Some(RunError::config(error)));
         }
         let mut scope = match scope::resolve(&self.root, &self.loaded.config, self.request) {
             Ok(scope) => scope,
-            Err(e) => {
-                let error = format!("could not compute the scope: {e}");
-                return self.finish(None, Vec::new(), Some(error));
-            }
+            Err(error) => return self.finish(None, Vec::new(), Some(error)),
         };
         let history = receipts::list(&self.root).unwrap_or_else(|e| {
             let message = format!("could not read past receipts, so nothing is demoted: {e}");
@@ -208,13 +207,13 @@ impl<'a> Session<'a> {
         check: Option<&Check>,
         status: CheckStatus,
         findings: Vec<Finding>,
-        not_run: Option<String>,
+        not_run: Option<RunError>,
         files: Vec<String>,
     ) -> CheckResult {
         let now = SystemTime::now();
         let why: Vec<&str> = not_run
             .iter()
-            .map(String::as_str)
+            .map(|e| e.message.as_str())
             .chain(findings.iter().map(|f| f.message.as_str()))
             .collect();
         let output = receipts::output_path(&self.root, &self.run_id, name)
@@ -245,17 +244,19 @@ impl<'a> Session<'a> {
     fn finish(
         self,
         scope: Option<&Resolved>,
-        results: Vec<CheckResult>,
-        error: Option<String>,
+        mut results: Vec<CheckResult>,
+        error: Option<RunError>,
     ) -> Outcome {
+        record::attach_output(&self.root, &mut results);
         let mut findings: Vec<Finding> = scope.map(|s| s.findings.clone()).unwrap_or_default();
         findings.extend(results.iter().flat_map(|r| r.findings.iter().cloned()));
         findings.extend(self.trigger_budget());
-        let reasons: Vec<&str> = results
-            .iter()
-            .filter_map(|r| r.not_run.as_deref())
-            .collect();
-        let error = error.or_else(|| (!reasons.is_empty()).then(|| reasons.join("\n")));
+        let reasons: Vec<&RunError> = results.iter().filter_map(|r| r.not_run.as_ref()).collect();
+        let error = error.or_else(|| {
+            let first = reasons.first()?;
+            let messages: Vec<&str> = reasons.iter().map(|e| e.message.as_str()).collect();
+            Some(RunError::new(first.kind, messages.join("; ")))
+        });
         let trigger = self.request.trigger;
         let started_at = crate::clock::rfc3339(self.started);
         let receipt_path = file_name(&started_at, trigger, &self.run_id)
@@ -273,7 +274,6 @@ impl<'a> Session<'a> {
         let mut report = Report::from_run(context, entries, findings, error);
         let finished_at = crate::clock::rfc3339(self.clock.now());
         let facts = RunFacts {
-            root: &self.root,
             run_id: &self.run_id,
             started_at: &started_at,
             finished_at: &finished_at,

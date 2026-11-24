@@ -2,14 +2,13 @@ use std::path::Path;
 
 use garita_core::ObjectId;
 use garita_core::receipt::{RECEIPT_VERSION, Receipt, ReceiptCheck, ResultWord, Tool};
-use garita_core::report::{Report, Scope, ScopeKind, Trigger};
+use garita_core::report::{CheckStatus, Report, Scope, ScopeKind, Trigger};
 
 use super::judge::CheckResult;
 use crate::clock;
 
 /// Everything a receipt says about the run besides its checks and report.
 pub struct RunFacts<'a> {
-    pub root: &'a Path,
     pub run_id: &'a str,
     pub started_at: &'a str,
     pub finished_at: &'a str,
@@ -23,17 +22,27 @@ pub struct RunFacts<'a> {
     pub scope: ScopeKind,
 }
 
+/// Puts each check's output path, and the tail of a check that did not pass, on its report entry,
+/// from the same values its receipt check holds.
+pub fn attach_output(root: &Path, results: &mut [CheckResult]) {
+    let real_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    for r in results {
+        r.entry.output = r.record.output.as_deref().map(|p| {
+            p.strip_prefix(&real_root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/")
+        });
+        let shown = !matches!(r.entry.status, CheckStatus::Pass | CheckStatus::Skipped);
+        r.entry.output_tail = (shown && !r.record.tail.is_empty()).then(|| r.record.tail.clone());
+    }
+}
+
 pub fn receipt(facts: &RunFacts<'_>, results: &[CheckResult], report: &Report) -> Receipt {
-    let real_root = std::fs::canonicalize(facts.root).unwrap_or_else(|_| facts.root.to_path_buf());
     let checks = results
         .iter()
         .map(|r| {
-            let output = r.record.output.as_deref().map_or_else(String::new, |p| {
-                p.strip_prefix(&real_root)
-                    .unwrap_or(p)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            });
+            let output = r.entry.output.clone().unwrap_or_default();
             ReceiptCheck {
                 name: r.entry.name.clone(),
                 kind: r.entry.kind,

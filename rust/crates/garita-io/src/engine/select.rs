@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use garita_core::config::{Check, CheckForm, Config, OnExceed};
-use garita_core::report::{CheckStatus, Finding, Severity, Trigger};
+use garita_core::report::{CheckStatus, Finding, RunError, Severity, Trigger};
 
 use super::finding::{finding, seconds};
 use crate::receipts::Listing;
@@ -16,7 +16,7 @@ pub enum Pick<'a> {
     NotRun {
         name: String,
         check: Option<&'a Check>,
-        reason: String,
+        reason: RunError,
     },
 }
 
@@ -41,7 +41,7 @@ pub fn select<'a>(
                 None => Pick::NotRun {
                     name: name.clone(),
                     check: None,
-                    reason: format!("`{name}` is not a check in the config"),
+                    reason: RunError::usage(format!("`{name}` is not a check in the config")),
                 },
             })
             .collect();
@@ -66,10 +66,10 @@ fn supported(check: &Check) -> Pick<'_> {
     Pick::NotRun {
         name: check.name.clone(),
         check: Some(check),
-        reason: format!(
+        reason: RunError::config(format!(
             "checks.{}: the {form} form is not supported by this version of garita",
             check.name
-        ),
+        )),
     }
 }
 

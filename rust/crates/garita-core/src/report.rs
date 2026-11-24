@@ -5,10 +5,73 @@ use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 
-use crate::argv::quote;
+use crate::argv::join;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const DOCTOR: &str = "garita doctor";
+
+/// [`DOCTOR`] as its arguments.
+pub fn doctor_argv() -> Vec<String> {
+    vec!["garita".to_string(), "doctor".to_string()]
+}
+
+/// The next action after a usage error: `describe` lists the arguments each command takes.
+pub fn describe_argv() -> Vec<String> {
+    vec!["garita".to_string(), "describe".to_string()]
+}
+
+/// Why a command could not run (RFC-4 §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorKind {
+    /// The arguments were wrong.
+    Usage,
+    /// The configuration could not be loaded or is invalid.
+    Config,
+    /// Something outside garita is missing: a repository, a program, a directory.
+    Environment,
+    /// garita itself failed.
+    Internal,
+}
+
+/// The `error` and `error_kind` of a `not-run` report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl RunError {
+    /// `error` is one line (RFC-4 §4), so a message of several lines is joined with `; `.
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        let message: String = message.into();
+        let lines: Vec<&str> = message
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        Self {
+            kind,
+            message: lines.join("; "),
+        }
+    }
+
+    pub fn usage(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Usage, message)
+    }
+
+    pub fn config(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Config, message)
+    }
+
+    pub fn environment(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Environment, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Internal, message)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -173,6 +236,9 @@ pub struct Finding {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    /// `fix` as its arguments; present exactly when `fix` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_argv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
 }
@@ -185,9 +251,36 @@ pub struct CheckEntry {
     pub duration_ms: u64,
     pub examined: Examined,
     pub rerun: Option<String>,
+    /// The last characters of the check's output, as its receipt check holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tail: Option<String>,
+    /// The repository-relative path of the check's full output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// Lines picked out of a failing output as the likely reason; garita's own key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_notable: Vec<String>,
     /// Tool findings below the check's `min_severity`, counted by severity.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub suppressed: BTreeMap<Severity, u64>,
+}
+
+impl CheckEntry {
+    /// An entry with no output, rerun or suppressed findings.
+    pub fn new(name: &str, kind: CheckKind, status: CheckStatus) -> Self {
+        Self {
+            name: name.to_string(),
+            kind,
+            status,
+            duration_ms: 0,
+            examined: Examined::new(),
+            rerun: None,
+            output_tail: None,
+            output: None,
+            output_notable: Vec::new(),
+            suppressed: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,16 +316,39 @@ pub struct Report {
     pub examined: Examined,
     pub next_action: Option<String>,
     pub next_action_reason: Option<String>,
+    /// `next_action` as its arguments; null exactly when it is.
+    #[serde(default)]
+    pub next_action_argv: Option<Vec<String>>,
     pub next_action_inputs: Vec<NextActionInput>,
     pub receipt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ErrorKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextAction {
     pub action: Option<String>,
+    pub argv: Option<Vec<String>>,
     pub reason: Option<String>,
+}
+
+impl NextAction {
+    pub const NONE: NextAction = NextAction {
+        action: None,
+        argv: None,
+        reason: None,
+    };
+
+    /// The command `argv`, printed from it so the two forms agree.
+    pub fn run(argv: Vec<String>, reason: String) -> Self {
+        Self {
+            action: Some(join(&argv)),
+            argv: Some(argv),
+            reason: Some(reason),
+        }
+    }
 }
 
 impl Report {
@@ -241,20 +357,27 @@ impl Report {
         context: RunContext,
         checks: Vec<CheckEntry>,
         findings: Vec<Finding>,
-        error: Option<String>,
+        error: Option<RunError>,
     ) -> Self {
         let status = run_status(&checks, &findings, error.is_some());
         let error = match (status, error) {
-            (RunStatus::NotRun, None) => Some(not_run_error(&checks)),
+            (RunStatus::NotRun, None) => Some(RunError::environment(not_run_error(&checks))),
             (_, error) => error,
         };
-        let next = next_action_for(
-            context.trigger,
-            status,
-            &checks,
-            &findings,
-            &context.without_files,
-        );
+        let next = if error.as_ref().is_some_and(|e| e.kind == ErrorKind::Usage) {
+            NextAction::run(
+                describe_argv(),
+                "the arguments were wrong; describe lists the ones each command takes".to_string(),
+            )
+        } else {
+            next_action_for(
+                context.trigger,
+                status,
+                &checks,
+                &findings,
+                &context.without_files,
+            )
+        };
         Self {
             schema_version: SCHEMA_VERSION,
             status,
@@ -268,15 +391,24 @@ impl Report {
             findings,
             next_action: next.action,
             next_action_reason: next.reason,
+            next_action_argv: next.argv,
             next_action_inputs: Vec::new(),
             receipt: context.receipt,
-            error,
+            error_kind: error.as_ref().map(|e| e.kind),
+            error: error.map(|e| e.message),
         }
     }
 
     /// A report for a run that could not start: no checks, no findings.
-    pub fn not_run(context: RunContext, error: String) -> Self {
+    pub fn not_run(context: RunContext, error: RunError) -> Self {
         Self::from_run(context, Vec::new(), Vec::new(), Some(error))
+    }
+
+    /// Replaces the next action, keeping its string and argv forms in step.
+    pub fn set_next(&mut self, next: NextAction) {
+        self.next_action = next.action;
+        self.next_action_argv = next.argv;
+        self.next_action_reason = next.reason;
     }
 
     pub fn exit_code(&self) -> u8 {
@@ -343,23 +475,11 @@ pub fn next_action_for(
     without_files: &BTreeSet<String>,
 ) -> NextAction {
     match status {
-        RunStatus::Pass | RunStatus::Warn => NextAction {
-            action: None,
-            reason: None,
-        },
-        RunStatus::NotRun => NextAction {
-            action: Some(DOCTOR.to_string()),
-            reason: Some(not_run_reason(checks)),
-        },
+        RunStatus::Pass | RunStatus::Warn => NextAction::NONE,
+        RunStatus::NotRun => NextAction::run(doctor_argv(), not_run_reason(checks)),
         RunStatus::Fail => match failing_rerun(trigger, checks, findings, without_files) {
-            Some(action) => NextAction {
-                action: Some(action),
-                reason: Some(fail_reason(checks, findings)),
-            },
-            None => NextAction {
-                action: None,
-                reason: None,
-            },
+            Some(argv) => NextAction::run(argv, fail_reason(checks, findings)),
+            None => NextAction::NONE,
         },
     }
 }
@@ -431,7 +551,7 @@ fn failing_rerun(
     checks: &[CheckEntry],
     findings: &[Finding],
     without_files: &BTreeSet<String>,
-) -> Option<String> {
+) -> Option<Vec<String>> {
     let has_error = |name: &str| {
         findings
             .iter()
@@ -452,20 +572,20 @@ fn failing_rerun(
     // An error that belongs to no listed check (a trigger's budget) can only be re-run by
     // running the trigger again, so it widens the re-run to the whole trigger.
     if run_level {
-        return Some(rerun_checks(trigger, &[], &[]));
+        return Some(rerun_argv(trigger, &[], &[]));
     }
     let first = *names.first()?;
     if names.iter().any(|n| without_files.contains(*n)) {
-        return Some(rerun_checks(trigger, &names, &[]));
+        return Some(rerun_argv(trigger, &names, &[]));
     }
     if names.len() == 1 {
-        return Some(rerun_command(trigger, first, &error_files(first, findings)));
+        return Some(rerun_argv(trigger, &[first], &error_files(first, findings)));
     }
     let mut files: Vec<&str> = Vec::new();
     for name in &names {
         let own = error_files(name, findings);
         if own.is_empty() {
-            return Some(rerun_checks(trigger, &names, &[]));
+            return Some(rerun_argv(trigger, &names, &[]));
         }
         for file in own {
             if !files.contains(&file) {
@@ -473,7 +593,7 @@ fn failing_rerun(
             }
         }
     }
-    Some(rerun_checks(trigger, &names, &files))
+    Some(rerun_argv(trigger, &names, &files))
 }
 
 fn error_files<'a>(check: &str, findings: &'a [Finding]) -> Vec<&'a str> {
@@ -499,25 +619,24 @@ pub fn rerun_command(trigger: Option<Trigger>, check: &str, files: &[&str]) -> S
 
 /// [`rerun_command`] for several checks at once.
 pub fn rerun_checks(trigger: Option<Trigger>, checks: &[&str], files: &[&str]) -> String {
-    let mut command = "garita run".to_string();
+    join(&rerun_argv(trigger, checks, files))
+}
+
+/// [`rerun_checks`] as its arguments.
+pub fn rerun_argv(trigger: Option<Trigger>, checks: &[&str], files: &[&str]) -> Vec<String> {
+    let mut argv = vec!["garita".to_string(), "run".to_string()];
     if let Some(t) = trigger.filter(|t| *t != Trigger::Commit) {
-        command.push_str(&format!(" --trigger {}", t.as_str()));
+        argv.extend(["--trigger".to_string(), t.as_str().to_string()]);
     }
-    for check in checks {
-        command.push(' ');
-        command.push_str(&quote(check));
-    }
+    argv.extend(checks.iter().map(|c| (*c).to_string()));
     if !files.is_empty() {
-        command.push_str(" --files");
+        argv.push("--files".to_string());
         if files.iter().any(|f| f.starts_with('-')) {
-            command.push_str(" --");
+            argv.push("--".to_string());
         }
-        for file in files {
-            command.push(' ');
-            command.push_str(&quote(file));
-        }
+        argv.extend(files.iter().map(|f| (*f).to_string()));
     }
-    command
+    argv
 }
 
 #[cfg(test)]
@@ -552,25 +671,23 @@ mod tests {
           "column": 5,
           "message": "Unexpected `debugger` statement",
           "fix": "oxlint --fix ts/frontend/src/App.tsx",
+          "fix_argv": ["oxlint", "--fix", "ts/frontend/src/App.tsx"],
           "fingerprint": "5d1c0e9a"
         }
       ],
       "examined": { "files": 38 },
       "next_action": "garita run --trigger push lint --files ts/frontend/src/App.tsx",
       "next_action_reason": "1 error in 1 check",
+      "next_action_argv": ["garita", "run", "--trigger", "push", "lint", "--files", "ts/frontend/src/App.tsx"],
       "next_action_inputs": [],
       "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json"
     }"#;
 
     fn check(name: &str, status: CheckStatus, files: u64) -> CheckEntry {
         CheckEntry {
-            name: name.into(),
-            kind: CheckKind::Lint,
-            status,
             duration_ms: 1,
             examined: [("files".to_string(), files)].into(),
-            rerun: None,
-            suppressed: BTreeMap::new(),
+            ..CheckEntry::new(name, CheckKind::Lint, status)
         }
     }
 
@@ -584,6 +701,7 @@ mod tests {
             column: None,
             message: "m".into(),
             fix: None,
+            fix_argv: None,
             fingerprint: None,
         }
     }
@@ -701,13 +819,7 @@ mod tests {
                 &[],
                 &[finding("a", Severity::Warning, Some("x"))],
             );
-            assert_eq!(
-                next,
-                NextAction {
-                    action: None,
-                    reason: None
-                }
-            );
+            assert_eq!(next, NextAction::NONE);
         }
     }
 
@@ -850,13 +962,7 @@ mod tests {
             &[],
             &[finding("a", Severity::Warning, None)],
         );
-        assert_eq!(
-            next,
-            NextAction {
-                action: None,
-                reason: None
-            }
-        );
+        assert_eq!(next, NextAction::NONE);
     }
 
     fn verdict(checks: Vec<CheckEntry>, findings: Vec<Finding>) -> Report {
@@ -946,14 +1052,22 @@ mod tests {
 
     #[test]
     fn not_run_report_always_carries_the_gate_keys() {
-        let report = Report::not_run(RunContext::default(), "no .garita/config.yaml".into());
+        let report = Report::not_run(
+            RunContext::default(),
+            RunError::config("no .garita/config.yaml"),
+        );
         let value = serde_json::to_value(&report).unwrap();
         assert_eq!(value["status"], "not-run");
         assert_eq!(value["blocking"], false);
         assert_eq!(value["findings"], serde_json::json!([]));
         assert_eq!(value["examined"], serde_json::json!({}));
         assert_eq!(value["error"], "no .garita/config.yaml");
+        assert_eq!(value["error_kind"], "config");
         assert_eq!(value["next_action"], DOCTOR);
+        assert_eq!(
+            value["next_action_argv"],
+            serde_json::json!(["garita", "doctor"])
+        );
         assert_eq!(report.exit_code(), 2);
     }
 
@@ -967,6 +1081,7 @@ mod tests {
         assert_eq!(report.status, RunStatus::NotRun);
         assert!(!report.blocking);
         assert_eq!(report.error.as_deref(), Some("could not run: b"));
+        assert_eq!(report.error_kind, Some(ErrorKind::Environment));
         assert_eq!(report.examined, Examined::from([("files".to_string(), 4)]));
     }
 
@@ -976,7 +1091,7 @@ mod tests {
             RunContext::default(),
             vec![check("a", CheckStatus::Fail, 1)],
             vec![finding("a", Severity::Error, None)],
-            Some("tool missing".into()),
+            Some(RunError::environment("tool missing")),
         );
         assert_eq!(report.status, RunStatus::NotRun);
         assert!(!report.blocking);
@@ -988,6 +1103,8 @@ mod tests {
         let report = Report::from_run(RunContext::default(), Vec::new(), Vec::new(), None);
         let value = serde_json::to_value(&report).unwrap();
         assert!(value.get("error").is_none());
+        assert!(value.get("error_kind").is_none());
+        assert_eq!(value["next_action_argv"], serde_json::Value::Null);
         assert_eq!(value["next_action"], serde_json::Value::Null);
         assert_eq!(value["next_action_reason"], serde_json::Value::Null);
         assert_eq!(value["commit"], serde_json::Value::Null);
@@ -1052,6 +1169,55 @@ mod tests {
             rerun_command(Some(Trigger::Merge), "x", &[]),
             "garita run --trigger merge x"
         );
+    }
+
+    #[test]
+    fn the_next_action_string_is_its_argv_quoted() {
+        let checks = [check("lint", CheckStatus::Fail, 1)];
+        let f = [finding("lint", Severity::Error, Some("src/[id]/a b.ts"))];
+        let next = next_action(Some(Trigger::Push), RunStatus::Fail, &checks, &f);
+        let argv = next.argv.unwrap();
+        assert_eq!(
+            argv,
+            [
+                "garita",
+                "run",
+                "--trigger",
+                "push",
+                "lint",
+                "--files",
+                "src/[id]/a b.ts"
+            ]
+        );
+        assert_eq!(
+            next.action.as_deref(),
+            Some("garita run --trigger push lint --files 'src/[id]/a b.ts'")
+        );
+        assert_eq!(
+            crate::argv::split(next.action.as_deref().unwrap()).unwrap(),
+            argv
+        );
+    }
+
+    #[test]
+    fn a_usage_error_points_at_describe_and_others_at_doctor() {
+        let usage = Report::not_run(RunContext::default(), RunError::usage("bad"));
+        assert_eq!(usage.next_action.as_deref(), Some("garita describe"));
+        assert_eq!(usage.next_action_argv, Some(describe_argv()));
+        for error in [
+            RunError::config("c"),
+            RunError::environment("e"),
+            RunError::internal("i"),
+        ] {
+            let r = Report::not_run(RunContext::default(), error);
+            assert_eq!(r.next_action_argv, Some(doctor_argv()));
+        }
+    }
+
+    #[test]
+    fn an_error_is_one_line() {
+        let e = RunError::config("a is not valid:\n  x: bad\n\n  y: worse\n");
+        assert_eq!(e.message, "a is not valid:; x: bad; y: worse");
     }
 
     #[test]

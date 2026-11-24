@@ -18,7 +18,7 @@ pub enum ConfigFileError {
     Missing(PathBuf),
     #[error("could not read {path}: {source}")]
     Unreadable { path: PathBuf, source: io::Error },
-    #[error("{path} is not a valid config:\n{errors}")]
+    #[error("{path} is not a valid config: {errors}")]
     Invalid { path: PathBuf, errors: ConfigErrors },
     #[error("could not hash {path}: {source}")]
     Hash { path: PathBuf, source: GitError },

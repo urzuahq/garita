@@ -182,10 +182,16 @@ fn a_failing_run_fails_with_exit_1() {
         (out.report.status, out.exit_code(), out.report.blocking),
         (RunStatus::Fail, 1, true)
     );
+    assert_eq!(
+        finding(&out.report, "exit-code/failed").message,
+        "exited with code 3"
+    );
+    let bad = check(&out.report, "bad");
+    assert_eq!(bad.output_tail.as_deref(), Some("broken\n"));
     assert!(
-        finding(&out.report, "exit-code/failed")
-            .message
-            .contains("broken")
+        bad.output
+            .as_deref()
+            .is_some_and(|o| o.ends_with("/bad.log"))
     );
 }
 
@@ -425,11 +431,11 @@ fn many_files_are_split_into_batches_and_one_failing_batch_still_fails_the_run()
     let out = repo.run();
     assert!(repo.log("calls").len() >= 3, "{}", repo.log("calls").len());
     assert_eq!(out.exit_code(), 1);
-    assert!(
-        finding(&out.report, "exit-code/failed")
-            .message
-            .contains("target.ts")
-    );
+    let tail = check(&out.report, "lint")
+        .output_tail
+        .clone()
+        .unwrap_or_default();
+    assert!(tail.contains("target.ts"), "{tail}");
     assert_eq!(
         check(&out.report, "lint").examined.get("files"),
         Some(&(total as u64))
@@ -492,11 +498,13 @@ fn examining_nothing_with_a_non_zero_exit_is_an_error_without_files_too() {
         assert_eq!(f.severity, Severity::Error, "{case}");
         assert!(
             f.message
-                .contains("exited with code 1 and examined nothing")
-                && f.message.contains("No files found to lint"),
+                .ends_with("exited with code 1 and examined nothing"),
             "{case}: {}",
             f.message
         );
+        let lint = check(&out.report, "lint");
+        let tail = lint.output_tail.as_deref().unwrap_or_default();
+        assert!(tail.contains("No files found to lint"), "{case}: {tail}");
     }
 }
 

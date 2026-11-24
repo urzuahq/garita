@@ -4,14 +4,14 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use garita_core::report::{Examined, Finding, Severity, Trigger};
+use garita_core::report::{Examined, Finding, RunError, Severity, Trigger};
 
 use crate::config_file;
 use crate::git;
 use crate::verdict::{self, Verdict, finding};
 
 /// Raised when the script changes in a way an installed hook must be rewritten for.
-pub const HOOK_FORMAT: u32 = 1;
+pub const HOOK_FORMAT: u32 = 2;
 const MARKER: &str = "# garita hook format ";
 
 /// The hooks garita installs, with the trigger each runs.
@@ -23,11 +23,37 @@ pub type Script = fn(&str, Trigger) -> String;
 
 /// Every hook format garita has written, oldest first; a file is garita's only when it is
 /// byte for byte one of these.
-pub const FORMATS: &[(u32, Script)] = &[(1, script_v1)];
+pub const FORMATS: &[(u32, Script)] = &[(1, script_v1), (2, script_v2)];
 
 /// The script for one hook in the current format.
 pub fn script(name: &str, trigger: Trigger) -> String {
-    script_v1(name, trigger)
+    script_v2(name, trigger)
+}
+
+/// The `not-run` report a hook prints when `garita` is not on PATH (RFC-4 §5).
+pub fn missing_garita_report(name: &str, trigger: Trigger) -> String {
+    let t = trigger.as_str();
+    format!(
+        "{{\"status\":\"not-run\",\
+         \"error\":\"garita is not on PATH, so the {name} hook cannot run it and blocks this {t}\",\
+         \"error_kind\":\"environment\",\"next_action\":null,\"next_action_reason\":null,\
+         \"next_action_argv\":null,\"next_action_inputs\":[]}}"
+    )
+}
+
+/// Prints [`missing_garita_report`] on stdout, where `garita run` prints its own, and exits 2.
+fn script_v2(name: &str, trigger: Trigger) -> String {
+    let t = trigger.as_str();
+    let report = missing_garita_report(name, trigger);
+    format!(
+        "#!/bin/sh\n\
+         {MARKER}2: written by `garita hooks install`, which rewrites this file\n\
+         if ! command -v garita >/dev/null 2>&1; then\n  \
+         printf '%s\\n' '{report}'\n  \
+         exit 2\n\
+         fi\n\
+         exec garita run --trigger {t}\n"
+    )
 }
 
 /// Fails closed when `garita` is missing and leaves the verdict's exit code to `exec`.
@@ -214,6 +240,11 @@ fn resolved(path: &Path) -> PathBuf {
     }
 }
 
+/// Every way a hook command fails to run lies outside garita: the repository or its files.
+fn cannot(error: impl Into<String>) -> Verdict {
+    verdict::not_run(RunError::environment(error))
+}
+
 fn examined_hooks() -> Examined {
     Examined::from([("hooks".to_string(), HOOKS.len() as u64)])
 }
@@ -232,7 +263,7 @@ enum Step {
 pub fn install(dir: &Path, replace: bool) -> Verdict {
     let (root, hooks) = match locate(dir) {
         Ok(found) => found,
-        Err(e) => return verdict::not_run(e.to_string()),
+        Err(e) => return cannot(e.to_string()),
     };
     let mut findings = Vec::new();
     let mut refused = false;
@@ -242,7 +273,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             let shown = match git::hooks_path_set(&root) {
                 Ok(true) => format!("{} (core.hooksPath)", hooks.display()),
                 Ok(false) => format!("{}, where .git/hooks resolves to,", hooks.display()),
-                Err(e) => return verdict::not_run(e.to_string()),
+                Err(e) => return cannot(e.to_string()),
             };
             let (severity, message) = if replace {
                 (
@@ -262,7 +293,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
             };
             findings.push(finding(severity, "hooks-dir-shared", message));
         }
-        Err(e) => return verdict::not_run(e.to_string()),
+        Err(e) => return cannot(e.to_string()),
     }
     let mut steps = Vec::new();
     for (name, trigger) in HOOKS {
@@ -270,7 +301,7 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
             Err(e) => {
-                return verdict::not_run(format!("could not read {}: {e}", path.display()));
+                return cannot(format!("could not read {}: {e}", path.display()));
             }
         };
         let step = plan(&file, name, trigger, replace);
@@ -301,10 +332,10 @@ pub fn install(dir: &Path, replace: bool) -> Verdict {
                     let mut error = format!("could not write {}: {e}", path.display());
                     for (path, prior) in written.iter().rev() {
                         if let Err(e) = prior.restore(&hooks, path) {
-                            error.push_str(&format!("\ncould not restore {}: {e}", path.display()));
+                            error.push_str(&format!("; could not restore {}: {e}", path.display()));
                         }
                     }
-                    return verdict::not_run(error);
+                    return cannot(error);
                 }
                 written.push((path, prior));
                 findings.push(done);
@@ -465,7 +496,7 @@ fn make_link(_: &Path, _: &Path) -> io::Result<()> {
 pub fn uninstall(dir: &Path) -> Verdict {
     let (_, hooks) = match locate(dir) {
         Ok(found) => found,
-        Err(e) => return verdict::not_run(e.to_string()),
+        Err(e) => return cannot(e.to_string()),
     };
     let mut findings = Vec::new();
     for (name, trigger) in HOOKS {
@@ -473,13 +504,13 @@ pub fn uninstall(dir: &Path) -> Verdict {
         let shown = path.display();
         let file = match examine(&path, name, trigger) {
             Ok(file) => file,
-            Err(e) => return verdict::not_run(format!("could not read {shown}: {e}")),
+            Err(e) => return cannot(format!("could not read {shown}: {e}")),
         };
         let (rule, message) = match file.kind {
             Kind::Missing if !file.symlink => ("hook-absent", format!("{shown} does not exist")),
             Kind::Garita(_) => {
                 if let Err(e) = fs::remove_file(&path) {
-                    return verdict::not_run(format!("could not remove {shown}: {e}"));
+                    return cannot(format!("could not remove {shown}: {e}"));
                 }
                 ("hook-removed", format!("removed {shown}"))
             }

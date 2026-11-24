@@ -261,14 +261,17 @@ implements it. The base keys, the exit codes and the rules for `not-run` are age
 `blocking`, `findings`, `examined` and the fields of a finding are its §2. The run profile is
 agent-cli-kit RFC-3: the report's `checks` and the fields of each entry (§1), `trigger`, `commit`,
 `tree`, `scope` and `receipt` (§1 and §2), `suppressed` (§3), `check` on a finding (§4) and the
-`<source>/<rule>` form of a wrapped tool's rule id (§5). This record repeats none of that. It states
+`<source>/<rule>` form of a wrapped tool's rule id (§5). agent-cli-kit RFC-4 adds the rest: an
+empty stderr, `error_kind`, the argv forms of `next_action` and `fix`, a check's `output_tail` and
+`output`, what `describe` declares about a command's inputs, and what a hook prints. This record
+repeats none of that. It states
 what garita does with those keys, and, under garita's extended contract below, what garita adds
 beyond them.
 
 **One JSON object, nothing else.** Every command prints exactly one JSON object on stdout and
-nothing on stderr, except a diagnostic when garita cannot write that object. Nothing a reader needs
-exists only on stderr. `--help`, `--version` and a command line that names no command are the
-argument parser's own text.
+nothing on stderr, except a diagnostic when garita cannot write that object. A command line garita
+cannot read, one that names no command included, and an internal failure are each a `not-run`
+report. Only `--help` and `--version` print the argument parser's own text.
 
 The report below illustrates a run report. It defines nothing.
 
@@ -338,10 +341,19 @@ What garita does with the report:
 - **`commit` is `null` at the commit trigger,** where no commit exists yet. `tree` is present
   whenever the run started in a repository; a run that could not start at all has none.
 - **Suppression.** A check's `min_severity` (§3) decides what is counted in its `suppressed`.
-- **What `garita describe` declares.** It prints the object agent-cli-kit RFC-1 §3 defines. It declares
-  `run`, `doctor`, `hooks install` and `hooks uninstall`, each with profile `run`, including the
-  three that select no checks. `run` declares the `base-ref` scope argument. It does not declare `paths`: its positional
-  arguments are check names, so it takes files through `--files` (agent-cli-kit RFC-3 §6).
+- **Which kind a `not-run` is.** A command line garita cannot read is `usage`. A config that is
+  missing, unreadable, invalid or asks for another garita is `config`. A directory that is not a
+  git repository, a tool that cannot be started and receipts that cannot be stored are
+  `environment`. A failure inside garita is `internal`.
+- **A check's output.** `output` names the file holding everything the check's command printed,
+  kept beside the receipt. `output_tail` is its end, printed for a check that failed, warned or
+  could not run. A finding's message for a failed command is one sentence and holds none of it.
+- **What `garita describe` declares.** It prints the object agent-cli-kit RFC-1 §3 and RFC-4 define.
+  It declares `run`, `doctor`, `hooks install` and `hooks uninstall`, each with profile `run`,
+  including the three that select no checks, and each one's arguments. `run` declares the
+  `base-ref` scope argument. It does not declare `paths`: its positional arguments are check
+  names, so it takes files through `--files` (agent-cli-kit RFC-3 §6). Only `doctor` is declared
+  safe. garita has no log and reads no standard input.
 
 #### garita's extended contract
 
@@ -353,12 +365,15 @@ the shared contract promises.
   the failing checks, at the same trigger, on the failing files when every one of them has files.
   Only a check is ever named as a check to re-run: an error that belongs to the run, such as a
   trigger over its budget, re-runs the whole trigger. When the run is `not-run` it is
-  `garita doctor`. It is `null` on `pass` and `warn`, and always `null` from `doctor` and the
-  `hooks` commands, whose findings say what to change.
+  `garita doctor`, or `garita describe` after a usage error. It is `null` on `pass` and `warn`,
+  and always `null` from `doctor` and the `hooks` commands, whose findings say what to change.
   `next_action_reason` is a count of what failed, such as `1 error in 1 check`.
 - **`fingerprint`.** An opaque string, stable across runs for the same finding. How garita computes
   it is its own, and a reader must not parse it.
 - **`message`.** Text for a reader that promises no layout. Output a reader should parse gets a key.
+- **`output_notable`.** On a check's entry: up to a few lines from anywhere in its output that look
+  like the reason it failed, which the tail can miss. Under a task runner each line starts with
+  its task's name.
 - **`examined` units.** garita uses `files`, `tests` and `packages`.
 - **Rule ids.** The wrapped tools' ids follow the `<source>/<rule>` form of agent-cli-kit RFC-3 §5.
   The ids garita raises itself are its own, such as `no-op`, `no-input`, `demoted`, `budget`,
@@ -374,8 +389,8 @@ A parser turns a tool's own output into findings. The point of garita is that th
 real parsers, so a finding carries file, line, rule and message:
 
 - **First set:** oxlint, oxfmt, tsc, Vitest, cargo (check, clippy, test), and a generic
-  `exit-code` parser that keeps the tool's last lines of output as the finding's message, so an
-  unparsed check still tells the agent more than an exit status.
+  `exit-code` parser, whose check entry carries the end of the tool's output (§5), so an unparsed
+  check still tells the agent more than an exit status.
 - **Prefer the tool's own JSON** (`oxlint --format json`, `cargo --message-format json`, Vitest's JSON
   reporter). Scrape text only where a tool has no structured output.
 - **Read the output, not the exit code.** A tool can exit 1 for findings, for a bad config and for
@@ -395,8 +410,9 @@ real parsers, so a finding carries file, line, rule and message:
 | CI | `garita run --trigger ci` | Same config, same verdict; no workflow re-lists the checks |
 | Merge | `garita merge <PR>`: merges the PR into the target branch in a throwaway worktree, runs the `merge` trigger there, acts on `pass` as `merge.mode` says, then removes the worktree | Gates the merged result, not the branch, and works when CI is unavailable |
 
-An installed git hook exits non-zero, with a message, when `garita` is not on the machine or is older
-than the config's `requires`. A machine without garita must not read as a pass.
+An installed git hook blocks when `garita` is not on the machine or is older than the config's
+`requires`: it exits 2 and prints a `not-run` report, as agent-cli-kit RFC-4 says a hook must. A
+machine without garita must not read as a pass.
 
 `garita doctor` says whether the gate will run here: a missing, foreign or outdated hook, a tool a
 check names that is not on the machine, receipts that git does not ignore, `garita` itself missing
