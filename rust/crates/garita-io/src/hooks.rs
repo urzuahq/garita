@@ -12,7 +12,7 @@ use crate::git;
 use crate::verdict::{self, Verdict, finding};
 
 /// Raised when the script changes in a way an installed hook must be rewritten for.
-pub const HOOK_FORMAT: u32 = 2;
+pub const HOOK_FORMAT: u32 = 3;
 const MARKER: &str = "# garita hook format ";
 
 /// The hooks garita installs, with the trigger each runs.
@@ -24,31 +24,44 @@ pub type Script = fn(&str, Trigger) -> String;
 
 /// Every hook format garita has written, oldest first; a file is garita's only when it is
 /// byte for byte one of these.
-pub const FORMATS: &[(u32, Script)] = &[(1, script_v1), (2, script_v2)];
+pub const FORMATS: &[(u32, Script)] = &[(1, script_v1), (2, script_v2), (3, script_v3)];
 
 /// The script for one hook in the current format.
 pub fn script(name: &str, trigger: Trigger) -> String {
-    script_v2(name, trigger)
+    script_v3(name, trigger)
 }
 
 /// The `not-run` report a hook prints when `garita` is not on PATH (RFC-4 §5).
 pub fn missing_garita_report(name: &str, trigger: Trigger) -> String {
+    not_run_literal(name, trigger, "\"error_kinds\":[\"environment\"]")
+}
+
+fn not_run_literal(name: &str, trigger: Trigger, kinds: &str) -> String {
     let t = trigger.as_str();
     format!(
         "{{\"status\":\"not-run\",\
          \"error\":\"garita is not on PATH, so the {name} hook cannot run it and blocks this {t}\",\
-         \"error_kind\":\"environment\",\"next_action\":null,\"next_action_reason\":null,\
+         {kinds},\"next_action\":null,\"next_action_reason\":null,\
          \"next_action_argv\":null,\"next_action_inputs\":[]}}"
     )
 }
 
 /// Prints [`missing_garita_report`] on stdout, where `garita run` prints its own, and exits 2.
+fn script_v3(name: &str, trigger: Trigger) -> String {
+    missing_garita_script(3, &missing_garita_report(name, trigger), trigger)
+}
+
+/// Its report names `error_kind`, which contract 1.1.0-rc.4 renamed `error_kinds`.
 fn script_v2(name: &str, trigger: Trigger) -> String {
+    let report = not_run_literal(name, trigger, "\"error_kind\":\"environment\"");
+    missing_garita_script(2, &report, trigger)
+}
+
+fn missing_garita_script(format: u32, report: &str, trigger: Trigger) -> String {
     let t = trigger.as_str();
-    let report = missing_garita_report(name, trigger);
     format!(
         "#!/bin/sh\n\
-         {MARKER}2: written by `garita hooks install`, which rewrites this file\n\
+         {MARKER}{format}: written by `garita hooks install`, which rewrites this file\n\
          if ! command -v garita >/dev/null 2>&1; then\n  \
          printf '%s\\n' '{report}'\n  \
          exit 2\n\

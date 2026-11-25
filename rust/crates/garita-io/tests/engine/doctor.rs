@@ -184,7 +184,7 @@ fn a_format_1_hook_is_outdated_and_its_next_action_installs() {
     let path = hook(&repo, "pre-push");
     let text = fs::read_to_string(&path).unwrap();
     let old = text
-        .replace("format 2:", "format 1:")
+        .replace("format 3:", "format 1:")
         .replace(
             &format!(
                 "printf '%s\\n' '{}'",

@@ -1,6 +1,8 @@
 {
   "error": "garita is not on PATH, so the pre-commit hook cannot run it and blocks this commit",
-  "error_kind": "environment",
+  "error_kinds": [
+    "environment"
+  ],
   "next_action": null,
   "next_action_argv": null,
   "next_action_inputs": [],
