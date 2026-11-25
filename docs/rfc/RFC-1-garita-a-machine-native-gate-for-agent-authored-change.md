@@ -262,7 +262,7 @@ implements it. The base keys, the exit codes and the rules for `not-run` are age
 agent-cli-kit RFC-3: the report's `checks` and the fields of each entry (§1), `trigger`, `commit`,
 `tree`, `scope` and `receipt` (§1 and §2), `suppressed` (§3), `check` on a finding (§4) and the
 `<source>/<rule>` form of a wrapped tool's rule id (§5). agent-cli-kit RFC-4 adds the rest: an
-empty stderr, `error_kind`, the argv forms of `next_action` and `fix`, a check's `output_tail` and
+empty stderr, `error_kinds`, the argv forms of `next_action` and `fix`, a check's `output_tail` and
 `output`, what `describe` declares about a command's inputs, and what a hook prints. This record
 repeats none of that. It states
 what garita does with those keys, and, under garita's extended contract below, what garita adds

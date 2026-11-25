@@ -95,7 +95,7 @@ pub fn to_json(report: &Report) -> String {
              \"examined\":{{}},\"next_action\":\"garita doctor\",\
              \"next_action_reason\":\"the run could not start\",\
              \"next_action_argv\":[\"garita\",\"doctor\"],\"next_action_inputs\":[],\
-             \"receipt\":null,\"error\":{error},\"error_kind\":\"internal\"}}"
+             \"receipt\":null,\"error\":{error},\"error_kinds\":[\"internal\"]}}"
         )
     })
 }

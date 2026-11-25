@@ -3,7 +3,9 @@
   "checks": [],
   "commit": null,
   "error": ".garita/config.yaml does not exist",
-  "error_kind": "config",
+  "error_kinds": [
+    "config"
+  ],
   "examined": {},
   "findings": [],
   "next_action": null,

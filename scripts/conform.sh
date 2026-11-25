@@ -46,4 +46,4 @@ if ! (cd "$repo" && garita doctor) | grep -q '"status":"pass"'; then
 fi
 
 cd "$repo"
-python3 -I "$kit/scripts/conform.py" "$work/bin/garita" --schemas "$contract"
+python3 -I "$kit/scripts/conform.py" "$work/bin/garita" --schemas "$contract" --require-run

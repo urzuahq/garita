@@ -21,7 +21,7 @@ pub fn describe_argv() -> Vec<String> {
 }
 
 /// Why a command could not run (RFC-4 §4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ErrorKind {
     /// The arguments were wrong.
@@ -34,23 +34,11 @@ pub enum ErrorKind {
     Internal,
 }
 
-impl ErrorKind {
-    /// Which kind names a run that failed for several reasons: the lowest rank wins, because
-    /// what the caller typed is the cheapest thing to repair first.
-    pub const fn precedence(self) -> u8 {
-        match self {
-            Self::Usage => 0,
-            Self::Config => 1,
-            Self::Environment => 2,
-            Self::Internal => 3,
-        }
-    }
-}
-
-/// The `error` and `error_kind` of a `not-run` report.
+/// The `error` and `error_kinds` of a `not-run` report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunError {
-    pub kind: ErrorKind,
+    /// Never empty; in declaration order, each kind once.
+    pub kinds: Vec<ErrorKind>,
     pub message: String,
 }
 
@@ -64,20 +52,35 @@ impl RunError {
             .filter(|l| !l.is_empty())
             .collect();
         Self {
-            kind,
+            kinds: vec![kind],
             message: lines.join("; "),
         }
     }
 
-    /// One error for several reasons: the kind of the highest-precedence reason, the messages
-    /// of all of them in order; `None` when there is no reason.
+    /// Keeps the kinds of `self` and replaces its message.
+    pub fn with_message(&self, message: impl Into<String>) -> Self {
+        let mut error = Self::new(self.kinds[0], message);
+        error.kinds.clone_from(&self.kinds);
+        error
+    }
+
+    /// One error for several reasons: every kind among them, the messages of all of them in
+    /// order; `None` when there is no reason.
     pub fn combine(reasons: &[&Self]) -> Option<Self> {
-        let kind = reasons
-            .iter()
-            .map(|r| r.kind)
-            .min_by_key(|k| k.precedence())?;
+        let first = reasons.first()?;
         let messages: Vec<&str> = reasons.iter().map(|r| r.message.as_str()).collect();
-        Some(Self::new(kind, messages.join("; ")))
+        let mut error = first.with_message(messages.join("; "));
+        error.kinds = reasons
+            .iter()
+            .flat_map(|r| r.kinds.iter().copied())
+            .collect();
+        error.kinds.sort_unstable();
+        error.kinds.dedup();
+        Some(error)
+    }
+
+    pub fn is(&self, kind: ErrorKind) -> bool {
+        self.kinds.contains(&kind)
     }
 
     pub fn usage(message: impl Into<String>) -> Self {
@@ -348,7 +351,7 @@ pub struct Report {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<ErrorKind>,
+    pub error_kinds: Option<Vec<ErrorKind>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -388,7 +391,7 @@ impl Report {
             (RunStatus::NotRun, None) => Some(RunError::environment(not_run_error(&checks))),
             (_, error) => error,
         };
-        let next = if error.as_ref().is_some_and(|e| e.kind == ErrorKind::Usage) {
+        let next = if error.as_ref().is_some_and(|e| e.is(ErrorKind::Usage)) {
             NextAction::run(
                 describe_argv(),
                 "the arguments were wrong; describe lists the ones each command takes".to_string(),
@@ -418,7 +421,7 @@ impl Report {
             next_action_argv: next.argv,
             next_action_inputs: Vec::new(),
             receipt: context.receipt,
-            error_kind: error.as_ref().map(|e| e.kind),
+            error_kinds: error.as_ref().map(|e| e.kinds.clone()),
             error: error.map(|e| e.message),
         }
     }
@@ -668,7 +671,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_aggregate_error_kind_follows_the_precedence_for_every_pair() {
+    fn combined_error_kinds_are_each_kind_once_in_order_for_every_pair() {
         let kinds = [
             ErrorKind::Usage,
             ErrorKind::Config,
@@ -678,10 +681,11 @@ mod tests {
         for (i, a) in kinds.iter().enumerate() {
             for (j, b) in kinds.iter().enumerate() {
                 let (first, second) = (RunError::new(*a, "a"), RunError::new(*b, "b"));
-                let want = kinds[i.min(j)];
+                let mut want = vec![kinds[i.min(j)], kinds[i.max(j)]];
+                want.dedup();
                 for reasons in [[&first, &second], [&second, &first]] {
                     let got = RunError::combine(&reasons).unwrap();
-                    assert_eq!(got.kind, want, "{a:?} with {b:?}");
+                    assert_eq!(got.kinds, want, "{a:?} with {b:?}");
                 }
                 assert_eq!(
                     RunError::combine(&[&first, &second]).unwrap().message,
@@ -1111,7 +1115,7 @@ mod tests {
         assert_eq!(value["findings"], serde_json::json!([]));
         assert_eq!(value["examined"], serde_json::json!({}));
         assert_eq!(value["error"], "no .garita/config.yaml");
-        assert_eq!(value["error_kind"], "config");
+        assert_eq!(value["error_kinds"], serde_json::json!(["config"]));
         assert_eq!(value["next_action"], DOCTOR);
         assert_eq!(
             value["next_action_argv"],
@@ -1130,7 +1134,7 @@ mod tests {
         assert_eq!(report.status, RunStatus::NotRun);
         assert!(!report.blocking);
         assert_eq!(report.error.as_deref(), Some("could not run: b"));
-        assert_eq!(report.error_kind, Some(ErrorKind::Environment));
+        assert_eq!(report.error_kinds, Some(vec![ErrorKind::Environment]));
         assert_eq!(report.examined, Examined::from([("files".to_string(), 4)]));
     }
 
@@ -1152,7 +1156,7 @@ mod tests {
         let report = Report::from_run(RunContext::default(), Vec::new(), Vec::new(), None);
         let value = serde_json::to_value(&report).unwrap();
         assert!(value.get("error").is_none());
-        assert!(value.get("error_kind").is_none());
+        assert!(value.get("error_kinds").is_none());
         assert_eq!(value["next_action_argv"], serde_json::Value::Null);
         assert_eq!(value["next_action"], serde_json::Value::Null);
         assert_eq!(value["next_action_reason"], serde_json::Value::Null);

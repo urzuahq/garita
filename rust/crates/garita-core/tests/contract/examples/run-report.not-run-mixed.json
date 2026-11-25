@@ -26,7 +26,9 @@
   ],
   "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
   "error": "could not run: types",
-  "error_kind": "environment",
+  "error_kinds": [
+    "environment"
+  ],
   "examined": {
     "files": 38
   },

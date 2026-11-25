@@ -108,7 +108,7 @@ fn report_of(out: &Output) -> Report {
     );
     if report.status == RunStatus::NotRun {
         assert!(report.error.is_some());
-        assert!(report.error_kind.is_some());
+        assert!(report.error_kinds.is_some());
     }
     match (&report.next_action, &report.next_action_argv) {
         (None, None) => {}
@@ -188,7 +188,7 @@ fn a_bad_config_is_named_relative_to_the_repository() {
     t.write(".garita/config.yaml", "schema_version: 1\nchecks: 3\n");
     let out = garita(&t.repo(), &["run"]);
     let report = report_of(&out);
-    assert_eq!(report.error_kind, Some(ErrorKind::Config));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Config]));
     let error = report.error.unwrap();
     assert!(
         error.starts_with(".garita/config.yaml is not a valid config: "),
@@ -217,7 +217,7 @@ fn a_name_that_is_not_a_check_has_no_entry_and_no_output_file() {
     let report = report_of(&out);
     assert_eq!(report.status, RunStatus::NotRun);
     assert_eq!(out.status.code(), Some(2));
-    assert_eq!(report.error_kind, Some(ErrorKind::Usage));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Usage]));
     assert_eq!(
         report.error.as_deref(),
         Some("`nosuch`, `alsonot` are not checks in the config")
@@ -286,7 +286,7 @@ fn a_usage_error_under_run_is_still_one_not_run_report() {
     let out = garita(&t.repo(), &["run", "--trigger", "lunch"]);
     let report = report_of(&out);
     assert_eq!(out.status.code(), Some(2));
-    assert_eq!(report.error_kind, Some(ErrorKind::Usage));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Usage]));
     let error = report.error.unwrap();
     assert!(error.contains("lunch"), "{error}");
     assert!(!error.starts_with("error:"), "{error}");
@@ -305,7 +305,7 @@ fn a_top_level_usage_error_is_one_not_run_report_naming_the_argument() {
         let out = garita(&t.repo(), args);
         let report = report_of(&out);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
-        assert_eq!(report.error_kind, Some(ErrorKind::Usage), "{args:?}");
+        assert_eq!(report.error_kinds, Some(vec![ErrorKind::Usage]), "{args:?}");
         let error = report.error.unwrap();
         assert!(error.contains(named), "{args:?}: {error}");
         assert!(!error.contains("Usage") && !error.contains('\n'), "{error}");
