@@ -1,10 +1,15 @@
 ---
 Stable-Id: 01M848BPD59AS52DMCTTXMHE6T
-Status: Draft
+Status: Accepted
 Date: 2026-11-23
+Accepted-on: 2026-11-25
 Author: beauwilliams
 ---
 # 4 — CI and releases
+
+> **Accepted, 2026-11-25.** The maintainer accepted RFC-1, RFC-2 and RFC-4 together, in answer to
+> "garita RFC-1, RFC-2, RFC-4: accept?": "I will accept each of the three RFCs. Let's go ahead with
+> that." (spoken and transcribed). RFC-3 was not part of that answer.
 
 ## Summary
 
