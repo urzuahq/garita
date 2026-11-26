@@ -1,10 +1,15 @@
 ---
 Stable-Id: 01M7XKPYXGR0XNEG2CTRGY6WRG
-Status: Draft
+Status: Accepted
 Date: 2026-11-21
+Accepted-on: 2026-11-25
 Author: beauwilliams
 ---
 # 1 — garita: a machine-native gate for agent-authored change
+
+> **Accepted, 2026-11-25.** The maintainer accepted RFC-1, RFC-2 and RFC-4 together, in answer to
+> "garita RFC-1, RFC-2, RFC-4: accept?": "I will accept each of the three RFCs. Let's go ahead with
+> that." (spoken and transcribed). RFC-3 was not part of that answer.
 
 ## Summary
 
