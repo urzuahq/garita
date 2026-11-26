@@ -259,7 +259,7 @@ fn without_garita_on_path_the_hook_prints_a_not_run_report_and_blocks_the_commit
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "{\"status\":\"not-run\",\"error\":\"garita is not on PATH, so the pre-commit hook \
-         cannot run it and blocks this commit\",\"error_kind\":\"environment\",\
+         cannot run it and blocks this commit\",\"error_kinds\":[\"environment\"],\
          \"next_action\":null,\"next_action_reason\":null,\"next_action_argv\":null,\
          \"next_action_inputs\":[]}\n"
     );
