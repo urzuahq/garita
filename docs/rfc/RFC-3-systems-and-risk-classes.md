@@ -1,10 +1,14 @@
 ---
 Stable-Id: 01M838QGHEGFDWX5C3D82Z5D6J
-Status: Draft
+Status: Accepted
 Date: 2026-11-23
+Accepted-on: 2026-11-26
 Author: beauwilliams
 ---
 # 3 — Systems and risk classes
+
+> **Accepted, 2026-11-26.** The maintainer accepted this record as amended, in answer to "Accept
+> RFC-3 as amended, in full or in part": "Accept".
 
 ## Summary
 
@@ -307,7 +311,7 @@ of garita through config just like urzua."
 Decided by the maintainer on 2026-11-26, answering this record's proposed amendment ("1 yes, 2. Yes,
 3 yes fine for now, 4 yes"):
 
-- **The amendment is written and brought for acceptance**; this record stays Draft until then.
+- **The amendment is written and brought for acceptance.**
 - **An omitted `default` gives an unmatched path the highest class.**
 - **The built-in protected set is `.garita/**` and the CI workflow files**, "fine for now".
 - **The class is read alone with its own command**, `garita risk`, not a flag on `run`.
