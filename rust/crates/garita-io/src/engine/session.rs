@@ -8,7 +8,8 @@ use garita_core::argv::Placeholder;
 use garita_core::config::{Check, CheckForm, Config, OnExceed, satisfies};
 use garita_core::receipt::file_name;
 use garita_core::report::{
-    CheckKind, CheckStatus, Finding, Report, RunContext, RunError, Severity, Trigger,
+    CheckEntry, CheckKind, CheckStatus, Finding, Report, RequiredCheck, Risk, RunContext, RunError,
+    Severity, Trigger,
 };
 
 use super::exec;
@@ -16,6 +17,7 @@ use super::finding::{run_finding, seconds};
 use super::judge::{self, CheckResult, Record};
 use super::plan::{self, Planned};
 use super::record::{self, RunFacts};
+use super::risk;
 use super::scope::{self, Resolved};
 use super::select::{self, Pick};
 use super::{Clock, Outcome, Request};
@@ -66,6 +68,9 @@ struct Session<'a> {
     tree: ObjectId,
     worktree: ObjectId,
     dirty: bool,
+    /// The report's `risk`, judged as the run starts.
+    risk: Option<Risk>,
+    risk_findings: Vec<Finding>,
 }
 
 impl<'a> Session<'a> {
@@ -99,10 +104,20 @@ impl<'a> Session<'a> {
             commit,
             tree,
             worktree,
+            risk: None,
+            risk_findings: Vec::new(),
         })
     }
 
-    fn run(self) -> Outcome {
+    fn run(mut self) -> Outcome {
+        let judged = risk::judge(
+            &self.root,
+            self.request.base.as_deref(),
+            self.request.trigger == Trigger::Commit,
+            self.loaded.config.risk.is_some(),
+        );
+        self.risk = judged.risk;
+        self.risk_findings.extend(judged.finding);
         if let Some(error) = requires_error(&self.loaded.config, &self.request.version) {
             return self.finish(None, Vec::new(), Some(RunError::config(error)));
         }
@@ -246,7 +261,8 @@ impl<'a> Session<'a> {
         error: Option<RunError>,
     ) -> Outcome {
         record::attach_output(&self.root, &mut results);
-        let mut findings: Vec<Finding> = scope.map(|s| s.findings.clone()).unwrap_or_default();
+        let mut findings: Vec<Finding> = self.risk_findings.clone();
+        findings.extend(scope.map(|s| s.findings.clone()).unwrap_or_default());
         findings.extend(results.iter().flat_map(|r| r.findings.iter().cloned()));
         findings.extend(self.trigger_budget());
         let reasons: Vec<&RunError> = error
@@ -269,6 +285,11 @@ impl<'a> Session<'a> {
         };
         let entries = results.iter().map(|r| r.entry.clone()).collect();
         let mut report = Report::from_run(context, entries, findings, error);
+        report.risk = Some(
+            self.risk
+                .clone()
+                .map(|risk| risk.with_required(required(&self.loaded.config, &report.checks))),
+        );
         let finished_at = crate::clock::rfc3339(self.clock.now());
         let facts = RunFacts {
             run_id: &self.run_id,
@@ -339,6 +360,19 @@ fn unknown_error(picks: &[Pick<'_>]) -> Option<RunError> {
         many => format!("{} are not checks in the config", many.join(", ")),
     };
     Some(RunError::usage(message))
+}
+
+/// The checks that ran and can block; every one is System 0 until a check can declare a system.
+fn required(config: &Config, entries: &[CheckEntry]) -> Vec<RequiredCheck> {
+    entries
+        .iter()
+        .filter(|e| !config.check(&e.name).is_some_and(|c| c.advisory))
+        .map(|e| RequiredCheck {
+            check: e.name.clone(),
+            system: 0,
+            status: Some(e.status),
+        })
+        .collect()
 }
 
 /// The `run` checks whose command has no `{files}`.

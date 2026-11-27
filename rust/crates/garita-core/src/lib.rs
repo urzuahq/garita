@@ -8,6 +8,7 @@ pub mod glob;
 pub mod object_id;
 pub mod receipt;
 pub mod report;
+pub mod risk;
 
 pub use object_id::{ObjectId, ObjectIdError};
 pub use report::SCHEMA_VERSION;

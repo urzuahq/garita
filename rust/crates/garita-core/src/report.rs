@@ -348,10 +348,109 @@ pub struct Report {
     pub next_action_argv: Option<Vec<String>>,
     pub next_action_inputs: Vec<NextActionInput>,
     pub receipt: Option<String>,
+    /// The change's risk class (RFC-3 §6): absent on a report that judges no change, null when
+    /// the merge base declares no policy.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub risk: Option<Option<Risk>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kinds: Option<Vec<ErrorKind>>,
+}
+
+/// A key that is present deserializes to `Some`, even when it is null.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// How a change's class was set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RiskSource {
+    /// A rule or a protected path matched.
+    Matched,
+    /// No touched path matched, or the default is above every match.
+    Default,
+    /// The merge base's policy could not be read, so the change has no class.
+    BaseUnreadable,
+}
+
+/// A touched path that set the change's class.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedBy {
+    pub path: String,
+    pub pattern: String,
+    pub class: String,
+}
+
+/// A check the class requires, and how it ended when it ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequiredCheck {
+    pub check: String,
+    pub system: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<CheckStatus>,
+}
+
+/// The `risk` key; the fields a class sets are null when there is no class.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Risk {
+    pub class: Option<String>,
+    pub source: RiskSource,
+    pub enforced: Option<bool>,
+    pub requires: Option<u8>,
+    /// The highest system for which every required check passed.
+    pub reached: Option<u8>,
+    pub met: Option<bool>,
+    pub approvals: Option<u64>,
+    pub author_counts: Option<bool>,
+    pub needs_person: bool,
+    pub matched_by: Vec<MatchedBy>,
+    pub required: Vec<RequiredCheck>,
+}
+
+impl Risk {
+    /// A change whose merge base's policy could not be read: no class, and a person decides.
+    pub fn base_unreadable() -> Self {
+        Self {
+            class: None,
+            source: RiskSource::BaseUnreadable,
+            enforced: None,
+            requires: None,
+            reached: None,
+            met: None,
+            approvals: None,
+            author_counts: None,
+            needs_person: true,
+            matched_by: Vec::new(),
+            required: Vec::new(),
+        }
+    }
+
+    /// Sets `required` and fills `reached` and `met` from it; both stay null while any
+    /// required check has no status.
+    pub fn with_required(mut self, required: Vec<RequiredCheck>) -> Self {
+        let statuses: Option<Vec<CheckStatus>> = required.iter().map(|r| r.status).collect();
+        (self.reached, self.met) = match statuses {
+            None => (None, None),
+            Some(statuses) => {
+                let passed = statuses
+                    .iter()
+                    .all(|s| matches!(s, CheckStatus::Pass | CheckStatus::Warn));
+                (passed.then_some(0), Some(passed))
+            }
+        };
+        self.required = required;
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -421,6 +520,7 @@ impl Report {
             next_action_argv: next.argv,
             next_action_inputs: Vec::new(),
             receipt: context.receipt,
+            risk: None,
             error_kinds: error.as_ref().map(|e| e.kinds.clone()),
             error: error.map(|e| e.message),
         }

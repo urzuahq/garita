@@ -1,0 +1,114 @@
+{
+  "blocking": true,
+  "checks": [
+    {
+      "duration_ms": 412,
+      "examined": {
+        "files": 38
+      },
+      "kind": "lint",
+      "name": "lint",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/lint.log",
+      "rerun": "garita run lint",
+      "status": "fail"
+    },
+    {
+      "duration_ms": 412,
+      "examined": {
+        "files": 38
+      },
+      "kind": "types",
+      "name": "types",
+      "output": ".garita/receipts/01M7XM3Q4T8Z6R2K9V5B1N0HCW/types.log",
+      "rerun": "garita run types",
+      "status": "pass"
+    }
+  ],
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "examined": {
+    "files": 76
+  },
+  "findings": [
+    {
+      "column": null,
+      "file": null,
+      "fingerprint": "5d1c0e9a",
+      "line": null,
+      "message": "the change has no risk class, so a person must approve it: .garita/config.yaml at the merge base 1b29de5ea3f0 is not a valid config: risk.default: `high` is not a class in risk.classes; the classes are `routine`, `core`",
+      "rule": "risk-unreadable",
+      "severity": "info"
+    },
+    {
+      "check": "lint",
+      "column": 5,
+      "file": "src/app.ts",
+      "fingerprint": "5d1c0e9a",
+      "line": 1302,
+      "message": "Unexpected `debugger` statement",
+      "rule": "lint/rule",
+      "severity": "error"
+    },
+    {
+      "check": "lint",
+      "column": 5,
+      "file": "src/util.ts",
+      "fingerprint": "5d1c0e9a",
+      "line": 7,
+      "message": "Unexpected `debugger` statement",
+      "rule": "lint/rule",
+      "severity": "error"
+    }
+  ],
+  "next_action": "garita run --trigger push lint --files src/app.ts src/util.ts",
+  "next_action_argv": [
+    "garita",
+    "run",
+    "--trigger",
+    "push",
+    "lint",
+    "--files",
+    "src/app.ts",
+    "src/util.ts"
+  ],
+  "next_action_inputs": [],
+  "next_action_reason": "2 errors in 1 check",
+  "receipt": ".garita/receipts/20261121T031502Z-push-01M7XM3Q4T8Z6R2K9V5B1N0HCW.json",
+  "risk": {
+    "approvals": null,
+    "author_counts": null,
+    "class": null,
+    "enforced": null,
+    "matched_by": [],
+    "met": false,
+    "needs_person": true,
+    "reached": null,
+    "required": [
+      {
+        "check": "lint",
+        "status": "fail",
+        "system": 0
+      },
+      {
+        "check": "types",
+        "status": "pass",
+        "system": 0
+      }
+    ],
+    "requires": null,
+    "source": "base-unreadable"
+  },
+  "schema_version": 1,
+  "scope": {
+    "files": [
+      "src/app.ts",
+      "src/util.ts"
+    ],
+    "kind": "affected",
+    "packages": [
+      "frontend"
+    ]
+  },
+  "status": "fail",
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+  "trigger": "push"
+}

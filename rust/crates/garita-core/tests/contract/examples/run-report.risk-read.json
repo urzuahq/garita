@@ -1,0 +1,45 @@
+{
+  "blocking": false,
+  "checks": [],
+  "commit": "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62",
+  "examined": {},
+  "findings": [],
+  "next_action": null,
+  "next_action_argv": null,
+  "next_action_inputs": [],
+  "next_action_reason": null,
+  "receipt": null,
+  "risk": {
+    "approvals": 0,
+    "author_counts": false,
+    "class": "routine",
+    "enforced": true,
+    "matched_by": [
+      {
+        "class": "routine",
+        "path": "docs/a.md",
+        "pattern": "docs/**"
+      }
+    ],
+    "met": null,
+    "needs_person": false,
+    "reached": null,
+    "required": [
+      {
+        "check": "lint",
+        "system": 0
+      },
+      {
+        "check": "types",
+        "system": 0
+      }
+    ],
+    "requires": 0,
+    "source": "matched"
+  },
+  "schema_version": 1,
+  "scope": null,
+  "status": "pass",
+  "tree": "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80",
+  "trigger": null
+}

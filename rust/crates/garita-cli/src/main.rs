@@ -22,6 +22,12 @@ struct Cli {
 enum Command {
     /// Run the gate
     Run(RunArgs),
+    /// Print the change's risk class, running no checks
+    Risk {
+        /// The ref a change is measured against
+        #[arg(long)]
+        base: Option<String>,
+    },
     /// Check the local setup
     Doctor,
     /// Print the commands this tool offers, as JSON
@@ -93,6 +99,7 @@ fn main() -> ExitCode {
     let dir = current_dir();
     match cli.command {
         Command::Run(args) => run(args),
+        Command::Risk { base } => guarded(|| engine::risk(&dir, VERSION, base.as_deref())),
         Command::Describe => describe(),
         Command::Doctor => guarded(|| {
             doctor::doctor(&doctor::Request {

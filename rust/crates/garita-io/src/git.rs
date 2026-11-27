@@ -8,6 +8,7 @@ use std::process::{Command, Output, Stdio};
 
 use crate::shown::{shown, without_root};
 use garita_core::ObjectId;
+use garita_core::risk::Touched;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -225,6 +226,91 @@ pub fn partly_staged(root: &Path) -> Result<Vec<PathBuf>, GitError> {
 
 /// Files that HEAD adds, copies, modifies or renames since its merge base with `base`.
 pub fn changed_files(root: &Path, base: &str) -> Result<Vec<PathBuf>, GitError> {
+    let merge_base = merge_base(root, base)?;
+    files_since(root, &merge_base)
+}
+
+/// Files that HEAD adds, copies, modifies or renames since `merge_base`.
+pub fn files_since(root: &Path, merge_base: &ObjectId) -> Result<Vec<PathBuf>, GitError> {
+    run(
+        root,
+        [
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+            "--diff-filter=ACMR",
+            merge_base.as_str(),
+            "HEAD",
+            "--",
+        ],
+    )
+    .map(|b| paths(&b))
+}
+
+/// Every path that differs from `merge_base`, a rename naming its old path too: in the index
+/// when `staged`, else in HEAD.
+pub fn touched_since(
+    root: &Path,
+    merge_base: &ObjectId,
+    staged: bool,
+) -> Result<Vec<Touched>, GitError> {
+    let mut cmd = command(root);
+    cmd.args(["diff", "--name-status", "-z", "-M", "--no-ext-diff"]);
+    if staged {
+        cmd.arg("--cached");
+    }
+    cmd.arg(merge_base.as_str());
+    if !staged {
+        cmd.arg("HEAD");
+    }
+    cmd.arg("--");
+    let out = run_cmd(cmd)?;
+    let mut fields = out
+        .split(|b| *b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned());
+    let mut touched = Vec::new();
+    while let Some(status) = fields.next().filter(|s| !s.is_empty()) {
+        let unexpected = || GitError::Unexpected {
+            args: "diff --name-status".into(),
+            output: status.clone(),
+        };
+        let first = fields.next().ok_or_else(unexpected)?;
+        touched.push(if status.starts_with('R') {
+            Touched::renamed(&first, &fields.next().ok_or_else(unexpected)?)
+        } else if status.starts_with('C') {
+            Touched::path(&fields.next().ok_or_else(unexpected)?)
+        } else {
+            Touched::path(&first)
+        });
+    }
+    Ok(touched)
+}
+
+/// The text of `path` in commit `rev`, or `None` when the commit has no such file.
+pub fn show_file(root: &Path, rev: &str, path: &str) -> Result<Option<String>, GitError> {
+    let spec = format!("{rev}:{path}");
+    let mut cmd = command(root);
+    cmd.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        &spec,
+    ]);
+    let (desc, out) = output(cmd)?;
+    let blob = match out.status.code() {
+        Some(0) => object_id("rev-parse", &out.stdout)?,
+        Some(1 | 128) => return Ok(None),
+        _ => return Err(failed(desc, &out)),
+    };
+    let bytes = run(root, ["cat-file", "blob", blob.as_str()])?;
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// The merge base of HEAD and `base`.
+pub fn merge_base(root: &Path, base: &str) -> Result<ObjectId, GitError> {
     let spec = format!("{base}^{{commit}}");
     let mut verify = command(root);
     verify.args([
@@ -249,22 +335,7 @@ pub fn changed_files(root: &Path, base: &str) -> Result<Vec<PathBuf>, GitError> 
             _ => Err(failed(desc, &out)),
         };
     }
-    let merge_base = object_id("merge-base", &out.stdout)?;
-    run(
-        root,
-        [
-            "diff",
-            "--name-only",
-            "-z",
-            "--no-renames",
-            "--no-ext-diff",
-            "--diff-filter=ACMR",
-            merge_base.as_str(),
-            "HEAD",
-            "--",
-        ],
-    )
-    .map(|b| paths(&b))
+    object_id("merge-base", &out.stdout)
 }
 
 /// Every tracked file in the index, once each.

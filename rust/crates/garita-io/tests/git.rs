@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use common::{TempDir, commit_all, git, init, write};
 use garita_core::ObjectId;
+use garita_core::risk::Touched;
 use garita_io::git::{self as g, GitError};
 
 const ODD: [&str; 4] = ["sp ace.txt", "quo\"te.txt", "new\nline.txt", "ñandú.txt"];
@@ -309,6 +310,49 @@ fn changed_files_since_the_merge_base() {
         g::changed_files(r, "--output=x"),
         Err(GitError::RefNotFound(_))
     ));
+}
+
+#[test]
+fn touched_paths_name_deletes_and_both_sides_of_a_rename() {
+    let tmp = branched();
+    let r = tmp.path();
+    let merge_base = g::merge_base(r, "main").unwrap();
+    let mut committed: Vec<Touched> = g::touched_since(r, &merge_base, false).unwrap();
+    committed.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        committed,
+        [
+            Touched::path("base.txt"),
+            Touched::path("feature file.txt"),
+            Touched::path("old.txt"),
+        ]
+    );
+    write(
+        r,
+        "moved.txt",
+        "a long enough line to be found as the same file\n",
+    );
+    commit_all(r, "e");
+    git(r, &["mv", "moved.txt", "renamed.txt"]);
+    write(r, "unstaged.txt", "u\n");
+    let head = g::head_commit(r).unwrap().unwrap();
+    assert_eq!(
+        g::touched_since(r, &head, true).unwrap(),
+        [Touched::renamed("moved.txt", "renamed.txt")]
+    );
+    assert!(g::touched_since(r, &head, false).unwrap().is_empty());
+}
+
+#[test]
+fn show_file_reads_a_file_at_a_commit_or_says_there_is_none() {
+    let tmp = branched();
+    let r = tmp.path();
+    assert_eq!(
+        g::show_file(r, "main", "old.txt").unwrap().as_deref(),
+        Some("old\n")
+    );
+    assert_eq!(g::show_file(r, "feature", "old.txt").unwrap(), None);
+    assert_eq!(g::show_file(r, "main", "nope/x").unwrap(), None);
 }
 
 #[test]

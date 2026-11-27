@@ -5,6 +5,7 @@ pub(crate) mod finding;
 mod judge;
 mod plan;
 mod record;
+mod risk;
 pub(crate) mod scope;
 mod select;
 pub(crate) mod session;
@@ -83,6 +84,11 @@ impl Outcome {
 /// Runs the gate. Every failure garita cannot attribute to a check is a `not-run` report.
 pub fn run(request: &Request, clock: &dyn Clock) -> Outcome {
     session::run(request, clock)
+}
+
+/// `garita risk`: the change's risk class against `base`, with no check run and nothing written.
+pub fn risk(dir: &std::path::Path, version: &str, base: Option<&str>) -> Report {
+    risk::read(dir, version, base)
 }
 
 /// The report as one line of compact JSON.
