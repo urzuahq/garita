@@ -1,5 +1,5 @@
 ---
-default: patch
+default: minor
 ---
 
 A change is matched to one of the repository's risk classes, and the run report says which.

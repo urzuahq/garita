@@ -1,5 +1,5 @@
 ---
-default: patch
+default: minor
 ---
 
 `garita risk` prints a change's risk class alone.
