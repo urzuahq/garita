@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - if: steps.app.outputs.configured == 'true'
-        uses: ./.github/actions/install-knope
+        uses: urzuahq/platform/ci/actions/install-knope@ca5f32b64440d25e461701b78794ac16c652ae4b # v0.3.0
       # knope.toml's prepare-release runs `cargo check` to refresh Cargo.lock after the bump.
       - name: install the pinned toolchain (rustup auto-detects rust-toolchain.toml)
         if: steps.app.outputs.configured == 'true'

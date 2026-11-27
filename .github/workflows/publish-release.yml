@@ -35,7 +35,7 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merge_commit_sha }}
-      - uses: ./.github/actions/install-knope
+      - uses: urzuahq/platform/ci/actions/install-knope@ca5f32b64440d25e461701b78794ac16c652ae4b # v0.3.0
       - name: configure git identity for the release tag
         run: |
           git config user.name "garita-release-bot"
