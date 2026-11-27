@@ -41,32 +41,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: install cargo-deny and cargo-machete (pinned, checksummed)
-        working-directory: .
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
-          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o deny.tgz https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.4/cargo-deny-0.19.4-x86_64-unknown-linux-musl.tar.gz
-          curl -sSLf --retry 5 --retry-all-errors --retry-delay 5 -o machete.tgz https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.1/cargo-machete-v0.9.1-x86_64-unknown-linux-musl.tar.gz
-          echo "3bd58b784e83715b86ddbc9deac591890372ec77fda5741bb0826970b958506f  deny.tgz" | sha256sum -c -
-          echo "640b0814480b401e4e72201e52a13e1311b8eb8d7c27faa08bbe9886f252f26d  machete.tgz" | sha256sum -c -
-          tar -xzf deny.tgz --strip-components=1 --wildcards '*/cargo-deny'
-          tar -xzf machete.tgz --strip-components=1 --wildcards '*/cargo-machete'
-          echo "$PWD" >> "$GITHUB_PATH"
+      - uses: urzuahq/platform/ci/actions/install-cargo-tools@ca5f32b64440d25e461701b78794ac16c652ae4b # v0.3.0
       - name: cargo machete (unused dependencies)
         run: cargo machete
       - name: cargo deny (advisories, bans, licenses, sources)
         run: cargo deny check
-      - uses: ./.github/actions/install-knope
+      - uses: urzuahq/platform/ci/actions/install-knope@ca5f32b64440d25e461701b78794ac16c652ae4b # v0.3.0
       - name: knope.toml is valid
         working-directory: .
         run: knope --validate
-      - name: knope is pinned in one place
-        working-directory: .
-        run: .github/scripts/knope-pin.test.sh
-      - name: nextest is pinned in one place
-        working-directory: .
-        run: .github/scripts/nextest-pin.test.sh
       - name: release invariants planted-violation cases
         working-directory: .
         run: .github/scripts/release-invariants.test.sh
@@ -129,7 +112,7 @@ jobs:
           workspaces: rust
           shared-key: test-${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: ./.github/actions/install-nextest
+      - uses: urzuahq/platform/ci/actions/install-nextest@ca5f32b64440d25e461701b78794ac16c652ae4b # v0.3.0
       - name: cargo nextest and doctests (and no leaked fixture directories)
         run: .github/scripts/ci-tests.sh
 
