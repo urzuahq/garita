@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use garita_core::ObjectId;
 use garita_core::adapter::rebase;
 use garita_core::config::Config;
 use garita_core::report::{Finding, RunError, Scope, ScopeKind, Severity};
@@ -126,17 +127,31 @@ type Changed = (Vec<PathBuf>, String, Option<Finding>);
 /// The changed files, the base they were measured against and any note about it, or why
 /// there are none.
 fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, GitError> {
+    let (name, merge_base) = match merge_base(root, base)? {
+        Ok(found) => found,
+        Err(why) => return Ok(Err(why)),
+    };
+    let files = git::files_since(root, &merge_base)?;
+    let note = match base {
+        Some(base) if equals_head(root, base)? => {
+            let message =
+                format!("the base `{base}` is HEAD's own commit, so the change set is empty");
+            Some(run_finding(Severity::Info, "base-is-head", message))
+        }
+        _ => None,
+    };
+    Ok(Ok((files, name, note)))
+}
+
+/// The base ref the `changed` scope measures against and its merge base with HEAD, or why
+/// there is none: `base` when given, else the first usable candidate.
+pub(crate) fn merge_base(
+    root: &Path,
+    base: Option<&str>,
+) -> Result<Result<(String, ObjectId), String>, GitError> {
     if let Some(base) = base {
-        return match git::changed_files(root, base) {
-            Ok(files) => {
-                let note = equals_head(root, base)?.then(|| {
-                    let message = format!(
-                        "the base `{base}` is HEAD's own commit, so the change set is empty"
-                    );
-                    run_finding(Severity::Info, "base-is-head", message)
-                });
-                Ok(Ok((files, base.to_string(), note)))
-            }
+        return match git::merge_base(root, base) {
+            Ok(merge_base) => Ok(Ok((base.to_string(), merge_base))),
             Err(
                 e @ (GitError::RefNotFound(_) | GitError::Shallow(_) | GitError::NoMergeBase(_)),
             ) => Ok(Err(e.to_string())),
@@ -151,8 +166,8 @@ fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, G
             passed_over.push(candidate);
             continue;
         }
-        match git::changed_files(root, candidate) {
-            Ok(files) => return Ok(Ok((files, candidate.to_string(), None))),
+        match git::merge_base(root, candidate) {
+            Ok(merge_base) => return Ok(Ok((candidate.to_string(), merge_base))),
             Err(GitError::RefNotFound(_)) => {}
             Err(e @ (GitError::Shallow(_) | GitError::NoMergeBase(_))) => {
                 return Ok(Err(e.to_string()));
@@ -176,7 +191,7 @@ fn changed(root: &Path, base: Option<&str>) -> Result<Result<Changed, String>, G
 
 /// Why no base ref can be found for the `changed` and `affected` scopes, when none can.
 pub(crate) fn base_unresolved(root: &Path) -> Result<Option<String>, GitError> {
-    Ok(changed(root, None)?.err())
+    Ok(merge_base(root, None)?.err())
 }
 
 fn equals_head(root: &Path, rev: &str) -> Result<bool, GitError> {

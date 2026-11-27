@@ -225,7 +225,7 @@ fn invalid_yaml_is_a_syntax_error() {
 fn unknown_keys_are_errors_at_every_level() {
     let yaml = r#"
 schema_version: 1
-risk: high
+rigor: high
 triggers: { deploy: {}, push: { scope: all, extra: 1 } }
 budgets: { on_exceed: warn, x: 1 }
 timeout: { factor: 2, y: 1 }
@@ -242,7 +242,7 @@ checks:
     assert_eq!(
         paths(yaml),
         [
-            "risk",
+            "rigor",
             "triggers.deploy",
             "triggers.push.extra",
             "budgets.x",
@@ -255,8 +255,8 @@ checks:
             "checks.c.budget.files",
         ]
     );
-    let message = errs("schema_version: 1\nrisk: high\n")[0].to_string();
-    assert!(message.starts_with("risk: unknown key; the keys allowed here are schema_version"));
+    let message = errs("schema_version: 1\nrigor: high\n")[0].to_string();
+    assert!(message.starts_with("rigor: unknown key; the keys allowed here are schema_version"));
 }
 
 #[test]
@@ -732,4 +732,186 @@ fn a_command_that_starts_with_a_placeholder_has_no_program() {
         "{e:?}"
     );
     assert_eq!(e[0].path(), "checks.c.run");
+}
+
+fn with_risk(body: &str) -> String {
+    format!("schema_version: 1\nrisk:\n{body}")
+}
+
+const RISK_EXAMPLE: &str = r#"
+schema_version: 1
+risk:
+  classes:
+    - { name: routine,  approvals: 0 }
+    - { name: core }
+    - { name: guarded,  author_counts: true, evidence: { accept: ci } }
+  default: core
+  protected: ["deploy/**"]
+  enforce: false
+  match:
+    - { paths: ["docs/**", "**/*.md"], class: routine }
+    - { paths: ["crates/core/**"], class: core }
+    - { paths: ["crates/signing/**", "crates/auth/**"], class: guarded }
+"#;
+
+#[test]
+fn a_risk_section_parses_with_its_defaults() {
+    let risk = ok(RISK_EXAMPLE).risk.unwrap();
+    let names: Vec<&str> = risk.classes.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["routine", "core", "guarded"]);
+    assert_eq!(risk.classes[0].approvals, 0);
+    assert_eq!(risk.classes[1].approvals, 1);
+    assert_eq!(risk.classes[1].requires, 0);
+    assert!(!risk.classes[1].author_counts);
+    assert!(risk.classes[2].author_counts);
+    assert_eq!(risk.classes[1].evidence, None);
+    assert_eq!(risk.classes[2].evidence, Some(EvidenceAccept::Ci));
+    assert_eq!(risk.default, Some(1));
+    assert_eq!(risk.protected, ["deploy/**"]);
+    assert!(!risk.enforce);
+    assert_eq!(risk.rules.len(), 3);
+    assert_eq!(risk.rules[2].class, 2);
+    assert_eq!(risk.rules[0].paths, ["docs/**", "**/*.md"]);
+}
+
+#[test]
+fn a_minimal_risk_section_enforces_and_has_no_default() {
+    let risk = ok(&with_risk("  classes: [{ name: only }]\n"))
+        .risk
+        .unwrap();
+    assert!(risk.enforce);
+    assert_eq!(risk.default, None);
+    assert_eq!(risk.default_class(), 0);
+    assert!(risk.rules.is_empty() && risk.protected.is_empty());
+    assert_eq!(ok("schema_version: 1\n").risk, None);
+}
+
+#[test]
+fn risk_needs_at_least_one_class() {
+    assert_eq!(paths(&with_risk("  enforce: true\n")), ["risk.classes"]);
+    let e = errs(&with_risk("  classes: []\n"));
+    assert_eq!(e[0].path(), "risk.classes");
+    assert!(e[0].to_string().contains("at least one class"), "{e:?}");
+    assert_eq!(paths(&with_risk("  classes: core\n")), ["risk.classes"]);
+    assert_eq!(paths("schema_version: 1\nrisk: [a]\n"), ["risk"]);
+}
+
+#[test]
+fn class_names_are_present_unique_and_not_blank() {
+    let e = errs(&with_risk(
+        "  classes: [{ name: a }, { approvals: 0 }, { name: ' ' }, { name: a }, { name: '' }]\n",
+    ));
+    let at: Vec<&str> = e.iter().map(ConfigError::path).collect();
+    assert_eq!(
+        at,
+        [
+            "risk.classes[1].name",
+            "risk.classes[2].name",
+            "risk.classes[3].name",
+            "risk.classes[4].name",
+        ]
+    );
+    assert!(e[1].to_string().contains("not blank"), "{}", e[1]);
+    assert_eq!(
+        e[2].to_string(),
+        "risk.classes[3].name: `a` is already the name of risk.classes[0]"
+    );
+}
+
+#[test]
+fn class_fields_are_type_checked_and_unknown_keys_rejected() {
+    let e = errs(&with_risk(
+        "  classes:\n    - { name: a, approvals: -1, author_counts: maybe, evidence: { accept: never }, owner: x }\n",
+    ));
+    let at: Vec<&str> = e.iter().map(ConfigError::path).collect();
+    assert_eq!(
+        at,
+        [
+            "risk.classes[0].owner",
+            "risk.classes[0].approvals",
+            "risk.classes[0].author_counts",
+            "risk.classes[0].evidence.accept",
+        ]
+    );
+    assert_eq!(
+        paths(&with_risk("  classes: [{ name: a }]\n  levels: 3\n")),
+        ["risk.levels"]
+    );
+}
+
+#[test]
+fn requires_above_zero_is_an_error_until_a_system_can_be_declared() {
+    let risk = ok(&with_risk("  classes: [{ name: a, requires: 0 }]\n")).risk;
+    assert_eq!(risk.unwrap().classes[0].requires, 0);
+    for n in [1, 2] {
+        let e = errs(&with_risk(&format!(
+            "  classes: [{{ name: a, requires: {n} }}]\n"
+        )));
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].path(), "risk.classes[0].requires");
+        let message = e[0].to_string();
+        assert!(message.contains("none can yet"), "{message}");
+        assert!(message.contains("set it to 0"), "{message}");
+    }
+    for bad in ["3", "-1", "one"] {
+        let e = errs(&with_risk(&format!(
+            "  classes: [{{ name: a, requires: {bad} }}]\n"
+        )));
+        assert!(e[0].to_string().contains("a system: 0, 1 or 2"), "{e:?}");
+    }
+}
+
+#[test]
+fn default_and_match_classes_name_a_declared_class() {
+    let e = errs(&with_risk(
+        "  classes: [{ name: routine }, { name: core }]\n  default: high\n  match:\n    - { paths: [a/**], class: routine }\n    - { paths: [b/**], class: guarded }\n",
+    ));
+    let at: Vec<&str> = e.iter().map(ConfigError::path).collect();
+    assert_eq!(at, ["risk.default", "risk.match[1].class"]);
+    assert_eq!(
+        e[0].to_string(),
+        "risk.default: `high` is not a class in risk.classes; the classes are `routine`, `core`"
+    );
+}
+
+#[test]
+fn a_match_rule_needs_paths_and_a_class() {
+    let e = errs(&with_risk(
+        "  classes: [{ name: a }]\n  match:\n    - { class: a }\n    - { paths: [], class: a }\n    - { paths: [x] }\n    - { paths: [x], class: a, why: y }\n    - x\n",
+    ));
+    let at: Vec<&str> = e.iter().map(ConfigError::path).collect();
+    assert_eq!(
+        at,
+        [
+            "risk.match[0].paths",
+            "risk.match[1].paths",
+            "risk.match[2].class",
+            "risk.match[3].why",
+            "risk.match[4]",
+        ]
+    );
+    assert_eq!(
+        paths(&with_risk(
+            "  classes: [{ name: a }]\n  match: { paths: [x] }\n"
+        )),
+        ["risk.match"]
+    );
+}
+
+#[test]
+fn protected_and_enforce_are_type_checked() {
+    assert_eq!(
+        paths(&with_risk(
+            "  classes: [{ name: a }]\n  protected: deploy\n  enforce: sometimes\n"
+        )),
+        ["risk.protected", "risk.enforce"]
+    );
+}
+
+#[test]
+fn a_config_may_declare_risk_unless_it_is_a_mapping_without_the_key() {
+    assert!(!Config::may_declare_risk("schema_version: 1\n"));
+    assert!(Config::may_declare_risk("schema_version: 1\nrisk: x\n"));
+    assert!(Config::may_declare_risk(": not yaml: ["));
+    assert!(Config::may_declare_risk("- a\n"));
 }

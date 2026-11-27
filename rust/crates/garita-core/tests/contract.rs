@@ -2,12 +2,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use garita_core::config::Config;
 use garita_core::describe::{CONTRACT_VERSION, describe};
 use garita_core::receipt::{RECEIPT_VERSION, Receipt, ReceiptCheck, ResultWord, Tool};
 use garita_core::report::{
-    CheckEntry, CheckKind, CheckStatus, Finding, Report, RunContext, RunError, Scope, ScopeKind,
-    Severity, Trigger,
+    CheckEntry, CheckKind, CheckStatus, Finding, Report, RequiredCheck, Risk, RunContext, RunError,
+    Scope, ScopeKind, Severity, Trigger,
 };
+use garita_core::risk::Touched;
 
 const COMMIT: &str = "1b29de5ea3f04c7d9a6b2e8f5c1d0a7b3e9f4c62";
 const TREE: &str = "9c1e4f2ab07d5e3c8f1a6b4d2e0c9f7a5b3d1e80";
@@ -93,6 +95,69 @@ fn fail_report() -> Report {
         finding("lint", Severity::Error, Some("src/util.ts"), Some(7)),
     ];
     Report::from_run(context(true), checks, findings, None)
+}
+
+const RISK_POLICY: &str = r#"
+schema_version: 1
+risk:
+  classes:
+    - { name: routine, approvals: 0 }
+    - { name: core }
+    - { name: guarded, author_counts: false }
+  default: core
+  match:
+    - { paths: ["docs/**"], class: routine }
+    - { paths: ["src/**"], class: guarded }
+"#;
+
+fn required(report: &Report) -> Vec<RequiredCheck> {
+    report
+        .checks
+        .iter()
+        .map(|c| RequiredCheck {
+            check: c.name.clone(),
+            system: 0,
+            status: Some(c.status),
+        })
+        .collect()
+}
+
+/// The pass report with the class its files match.
+fn risk_matched_report() -> Report {
+    let policy = Config::parse(RISK_POLICY).unwrap().risk.unwrap();
+    let touched = [
+        Touched::path("src/app.ts"),
+        Touched::renamed("src/util.ts", "lib/util.ts"),
+        Touched::path("docs/a.md"),
+    ];
+    let mut report = pass_report();
+    let risk = policy.report(policy.match_change(&touched));
+    report.risk = Some(Some(risk.with_required(required(&report))));
+    report
+}
+
+fn risk_none_report() -> Report {
+    let mut report = pass_report();
+    report.risk = Some(None);
+    report
+}
+
+/// The fail report of a change whose merge base's policy is invalid.
+fn risk_base_unreadable_report() -> Report {
+    let mut report = fail_report();
+    report.findings.insert(
+        0,
+        Finding {
+            check: None,
+            rule: "risk-unreadable".into(),
+            message: "the change has no risk class, so a person must approve it: .garita/config.yaml at the merge base 1b29de5ea3f0 is not a valid config: risk.default: `high` is not a class in risk.classes; the classes are `routine`, `core`".into(),
+            ..finding("lint", Severity::Info, None, None)
+        },
+    );
+    report.risk = Some(Some(
+        Risk::base_unreadable().with_required(required(&report)),
+    ));
+    report
 }
 
 fn not_run_report() -> Report {
@@ -242,7 +307,23 @@ fn cases() -> Vec<(&'static str, serde_json::Value)> {
     );
     let not_run = not_run_report();
     let not_run_receipt = receipt(ResultWord::from(not_run.status), Vec::new(), not_run);
+    let risk = risk_matched_report();
+    let risk_receipt = receipt(
+        ResultWord::from(risk.status),
+        vec![
+            receipt_check("lint", CheckKind::Lint, CheckStatus::Pass, Some(0)),
+            receipt_check("format", CheckKind::Format, CheckStatus::Pass, Some(0)),
+        ],
+        risk,
+    );
     vec![
+        ("run-report.risk-matched", json(risk_matched_report())),
+        ("run-report.risk-none", json(risk_none_report())),
+        (
+            "run-report.risk-base-unreadable",
+            json(risk_base_unreadable_report()),
+        ),
+        ("receipt.risk", json(risk_receipt)),
         ("run-report.pass", json(pass_report())),
         ("run-report.warn", json(warn_report())),
         ("run-report.fail", json(fail_report())),

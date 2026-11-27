@@ -28,6 +28,9 @@ Silicon.
 - `garita hooks install` writes the `pre-commit` and `pre-push` hooks into the directory git uses,
   and does not overwrite a hook it did not write unless you pass `--replace`. `garita doctor` says whether the gate will run on
   this machine.
+- A `risk` section in the config names the repository's own risk classes and the paths each covers.
+  `garita run` matches the change against the policy on its merge base and reports the class, who
+  must approve it, and whether the checks it requires passed.
 
 To install the latest release, with its build provenance checked by `gh`:
 
@@ -45,7 +48,8 @@ script verifies, and how to build from source.
 - [RFC-1](docs/rfc/RFC-1-garita-a-machine-native-gate-for-agent-authored-change.md): the gate, its
   configuration, budgets, output and receipts.
 - [RFC-2](docs/rfc/RFC-2-adapters-and-native-tools.md): adapters and native tools.
-- [RFC-3](docs/rfc/RFC-3-systems-and-risk-classes.md): systems and risk classes, a later phase.
+- [RFC-3](docs/rfc/RFC-3-systems-and-risk-classes.md): systems and risk classes; matching and
+  reporting a class works, and the systems above 0 are a later phase.
 
 garita's output follows the contract in
 [agent-cli-kit](https://github.com/urzuahq/agent-cli-kit).

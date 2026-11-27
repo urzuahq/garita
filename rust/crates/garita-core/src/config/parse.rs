@@ -11,6 +11,7 @@ use super::{
 };
 use crate::argv::{Arg, Command, Placeholder};
 use crate::report::{CheckKind, ScopeKind, Severity, Trigger};
+use crate::risk::{MatchRule, RiskClass, RiskPolicy};
 
 const TOP_KEYS: &[&str] = &[
     "schema_version",
@@ -22,8 +23,12 @@ const TOP_KEYS: &[&str] = &[
     "receipts",
     "merge",
     "evidence",
+    "risk",
     "checks",
 ];
+const RISK_KEYS: &[&str] = &["classes", "default", "protected", "enforce", "match"];
+const CLASS_KEYS: &[&str] = &["name", "requires", "approvals", "author_counts", "evidence"];
+const HIGHEST_SYSTEM: u64 = 2;
 const CHECK_KEYS: &[&str] = &[
     "run",
     "parser",
@@ -66,6 +71,13 @@ pub(super) fn parse(yaml: &str) -> Result<Config, ConfigErrors> {
     match config {
         Some(config) if w.errors.is_empty() => Ok(config),
         _ => Err(ConfigErrors(w.errors)),
+    }
+}
+
+pub(super) fn may_declare_risk(yaml: &str) -> bool {
+    match yaml_serde::from_str::<Value>(yaml) {
+        Ok(Value::Mapping(map)) => map.contains_key("risk"),
+        _ => true,
     }
 }
 
@@ -280,9 +292,13 @@ impl Walker {
                 method: None,
             },
             evidence_accept: EvidenceAccept::Ci,
+            risk: None,
             checks: Vec::new(),
         };
         self.settings(&f, &mut config);
+        if let Some(v) = f.get("risk") {
+            config.risk = self.risk(v);
+        }
         if let Some(v) = f.get("checks") {
             config.checks = self.checks(v);
         }
@@ -334,8 +350,215 @@ impl Walker {
             self.merge(v, &mut config.merge);
         }
         if let Some(v) = f.get("evidence") {
-            self.evidence(v, &mut config.evidence_accept);
+            self.evidence(v, "evidence", &mut config.evidence_accept);
         }
+    }
+
+    fn risk(&mut self, value: &Value) -> Option<RiskPolicy> {
+        let path = "risk";
+        let f = self.fields(value, path, RISK_KEYS);
+        if !value.is_mapping() {
+            return None;
+        }
+        let classes = match f.get("classes") {
+            Some(v) => self.classes(v, &join(path, "classes")),
+            None => {
+                let hint = "list the classes, lowest first, such as [{ name: routine }]";
+                self.missing(&join(path, "classes"), hint);
+                Vec::new()
+            }
+        };
+        let names: Vec<Option<&str>> = classes
+            .iter()
+            .map(|c| c.as_ref().map(|c| c.name.as_str()))
+            .collect();
+        let default = f
+            .get("default")
+            .and_then(|v| self.class_ref(v, &join(path, "default"), &names));
+        let protected = f
+            .get("protected")
+            .and_then(|v| self.strings(v, &join(path, "protected")))
+            .unwrap_or_default();
+        let enforce = f
+            .get("enforce")
+            .and_then(|v| self.boolean(v, &join(path, "enforce")))
+            .unwrap_or(true);
+        let rules = f
+            .get("match")
+            .map(|v| self.match_rules(v, &join(path, "match"), &names))
+            .unwrap_or_default();
+        let classes: Option<Vec<RiskClass>> = classes.into_iter().collect();
+        Some(RiskPolicy {
+            classes: classes.filter(|c| !c.is_empty())?,
+            default,
+            protected,
+            enforce,
+            rules: rules.into_iter().collect::<Option<_>>()?,
+        })
+    }
+
+    fn classes(&mut self, value: &Value, path: &str) -> Vec<Option<RiskClass>> {
+        let Some(items) = value.as_sequence() else {
+            self.wrong_type(path, "a list of classes, lowest first");
+            return Vec::new();
+        };
+        if items.is_empty() {
+            self.invalid(path, "list at least one class");
+        }
+        let mut classes: Vec<Option<RiskClass>> = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let class = self.class(item, &format!("{path}[{i}]"));
+            let earlier = class.as_ref().and_then(|c| {
+                classes
+                    .iter()
+                    .position(|e| e.as_ref().is_some_and(|e| e.name == c.name))
+            });
+            if let (Some(c), Some(j)) = (&class, earlier) {
+                let message = format!("`{}` is already the name of {path}[{j}]", c.name);
+                self.invalid(&format!("{path}[{i}].name"), message);
+            }
+            classes.push(class);
+        }
+        classes
+    }
+
+    fn class(&mut self, value: &Value, path: &str) -> Option<RiskClass> {
+        let f = self.fields(value, path, CLASS_KEYS);
+        if !value.is_mapping() {
+            return None;
+        }
+        let name_path = join(path, "name");
+        let name = match f.get("name") {
+            Some(v) => self.string(v, &name_path),
+            None => {
+                self.missing(&name_path, "a class needs a name, such as `routine`");
+                None
+            }
+        };
+        let name = name.filter(|n| {
+            let blank = n.trim().is_empty();
+            if blank {
+                self.invalid(&name_path, "a class name is not blank");
+            }
+            !blank
+        });
+        let requires = match f.get("requires") {
+            Some(v) => self.system(v, &join(path, "requires")),
+            None => Some(0),
+        };
+        let approvals = match f.get("approvals") {
+            Some(v) => {
+                let n = v.as_u64();
+                if n.is_none() {
+                    self.wrong_type(&join(path, "approvals"), "a whole number, 0 or more");
+                }
+                n
+            }
+            None => Some(1),
+        };
+        let author_counts = match f.get("author_counts") {
+            Some(v) => self.boolean(v, &join(path, "author_counts")),
+            None => Some(false),
+        };
+        let mut evidence = None;
+        if let Some(v) = f.get("evidence") {
+            let mut accept = EvidenceAccept::Ci;
+            let before = self.errors.len();
+            self.evidence(v, &join(path, "evidence"), &mut accept);
+            if self.errors.len() == before && v.as_mapping().is_some_and(|m| !m.is_empty()) {
+                evidence = Some(accept);
+            }
+        }
+        Some(RiskClass {
+            name: name?,
+            requires: requires?,
+            approvals: approvals?,
+            author_counts: author_counts?,
+            evidence,
+        })
+    }
+
+    fn system(&mut self, value: &Value, path: &str) -> Option<u8> {
+        match value.as_u64() {
+            Some(0) => Some(0),
+            Some(n) if n <= HIGHEST_SYSTEM => {
+                let message = format!(
+                    "a class may require system {n} only once a check of that system can be declared, and none can yet; remove `requires` or set it to 0"
+                );
+                self.invalid(path, message);
+                None
+            }
+            _ => {
+                self.wrong_type(path, "a system: 0, 1 or 2");
+                None
+            }
+        }
+    }
+
+    /// The index of the class `value` names among `names`.
+    fn class_ref(&mut self, value: &Value, path: &str, names: &[Option<&str>]) -> Option<usize> {
+        let name = self.string(value, path)?;
+        let found = names.iter().position(|n| *n == Some(name.as_str()));
+        if found.is_none() {
+            let known: Vec<String> = names.iter().flatten().map(|n| format!("`{n}`")).collect();
+            let list = if known.is_empty() {
+                "none is declared".to_string()
+            } else {
+                format!("the classes are {}", known.join(", "))
+            };
+            let message = format!("`{name}` is not a class in risk.classes; {list}");
+            self.invalid(path, message);
+        }
+        found
+    }
+
+    fn match_rules(
+        &mut self,
+        value: &Value,
+        path: &str,
+        names: &[Option<&str>],
+    ) -> Vec<Option<MatchRule>> {
+        let Some(items) = value.as_sequence() else {
+            self.wrong_type(
+                path,
+                "a list of rules such as { paths: [\"docs/**\"], class: routine }",
+            );
+            return vec![None];
+        };
+        let mut rules = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let at = format!("{path}[{i}]");
+            let f = self.fields(item, &at, &["paths", "class"]);
+            if !item.is_mapping() {
+                rules.push(None);
+                continue;
+            }
+            let paths = match f.get("paths") {
+                Some(v) => self.strings(v, &join(&at, "paths")).filter(|p| {
+                    if p.is_empty() {
+                        self.invalid(&join(&at, "paths"), "list at least one path glob");
+                    }
+                    !p.is_empty()
+                }),
+                None => {
+                    self.missing(&join(&at, "paths"), "list the path globs the rule matches");
+                    None
+                }
+            };
+            let class = match f.get("class") {
+                Some(v) => self.class_ref(v, &join(&at, "class"), names),
+                None => {
+                    self.missing(&join(&at, "class"), "name the class the paths match");
+                    None
+                }
+            };
+            rules.push(
+                paths
+                    .zip(class)
+                    .map(|(paths, class)| MatchRule { paths, class }),
+            );
+        }
+        rules
     }
 
     fn requires(&mut self, value: &Value) -> Option<VersionReq> {
@@ -440,8 +663,8 @@ impl Walker {
         }
     }
 
-    fn evidence(&mut self, value: &Value, accept: &mut EvidenceAccept) {
-        let f = self.fields(value, "evidence", &["accept"]);
+    fn evidence(&mut self, value: &Value, path: &str, accept: &mut EvidenceAccept) {
+        let f = self.fields(value, path, &["accept"]);
         if let Some(v) = f.get("accept") {
             let options = [
                 ("ci", EvidenceAccept::Ci),
@@ -449,7 +672,7 @@ impl Walker {
                 ("any", EvidenceAccept::Any),
             ];
             *accept = self
-                .choice(v, "evidence.accept", &options)
+                .choice(v, &join(path, "accept"), &options)
                 .unwrap_or(*accept);
         }
     }

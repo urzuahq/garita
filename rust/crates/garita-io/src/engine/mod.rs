@@ -5,6 +5,7 @@ pub(crate) mod finding;
 mod judge;
 mod plan;
 mod record;
+mod risk;
 pub(crate) mod scope;
 mod select;
 pub(crate) mod session;

@@ -12,6 +12,7 @@ use thiserror::Error;
 
 use crate::argv::Command;
 use crate::report::{CheckKind, ScopeKind, Severity, Trigger};
+use crate::risk::RiskPolicy;
 
 pub use duration::{DurationError, parse_duration};
 pub const VIA_TURBO: &str = parse::VIA_TURBO;
@@ -212,12 +213,19 @@ pub struct Config {
     pub receipts_keep: u64,
     pub merge: MergeConfig,
     pub evidence_accept: EvidenceAccept,
+    pub risk: Option<RiskPolicy>,
     pub checks: Vec<Check>,
 }
 
 impl Config {
     pub fn parse(yaml: &str) -> Result<Self, ConfigErrors> {
         parse::parse(yaml)
+    }
+
+    /// Whether a config's text may hold a `risk` section: false only for a YAML mapping
+    /// without the key, so a document that cannot be read never counts as declaring none.
+    pub fn may_declare_risk(yaml: &str) -> bool {
+        parse::may_declare_risk(yaml)
     }
 
     pub fn trigger(&self, trigger: Trigger) -> TriggerConfig {
