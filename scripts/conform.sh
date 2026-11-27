@@ -37,7 +37,7 @@ ln -s "$garita" "$work/bin/garita"
 export PATH="$work/bin:$PATH"
 git -C "$repo" init -q -b main
 printf '.garita/receipts/\n' > "$repo/.gitignore"
-printf 'schema_version: 1\nchecks:\n  noop:\n    run: "true"\n    parser: exit-code\n    on: [commit, push, ci]\n' \
+printf 'schema_version: 1\nrisk:\n  classes: [{ name: routine }]\nchecks:\n  noop:\n    run: "true"\n    parser: exit-code\n    on: [commit, push, ci]\n' \
   > "$repo/.garita/config.yaml"
 (cd "$repo" && garita hooks install > /dev/null)
 if ! (cd "$repo" && garita doctor) | grep -q '"status":"pass"'; then

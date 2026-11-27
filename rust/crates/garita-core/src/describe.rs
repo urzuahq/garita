@@ -141,12 +141,6 @@ fn run_args() -> Vec<Arg> {
             "Where the run happens, which picks its scope and checks; commit when left out.",
         )
     };
-    let base = valued(
-        ArgKind::Option,
-        "--base",
-        ArgType::String,
-        "The git ref a change is measured against.",
-    );
     let files = Arg {
         repeatable: true,
         ..valued(
@@ -175,7 +169,16 @@ fn run_args() -> Vec<Arg> {
             "More files for --files, such as ones that begin with a dash.",
         )
     };
-    vec![trigger, base, files, checks, after]
+    vec![trigger, base(), files, checks, after]
+}
+
+fn base() -> Arg {
+    valued(
+        ArgKind::Option,
+        "--base",
+        ArgType::String,
+        "The git ref a change is measured against.",
+    )
 }
 
 fn command(name: &'static str, safe: bool, scopes: &[&'static str], args: Vec<Arg>) -> Command {
@@ -218,6 +221,7 @@ pub fn describe(version: &str) -> Describe {
         log: None,
         commands: vec![
             command("run", false, &["base-ref"], run_args()),
+            command("risk", true, &["base-ref"], vec![base()]),
             command("doctor", true, &[], Vec::new()),
             command("hooks install", false, &[], vec![replace]),
             command("hooks uninstall", false, &[], Vec::new()),

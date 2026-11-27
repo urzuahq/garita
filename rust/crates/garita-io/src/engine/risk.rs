@@ -4,12 +4,68 @@ use std::path::Path;
 
 use garita_core::ObjectId;
 use garita_core::config::Config;
-use garita_core::report::{Finding, Risk, Severity};
+use garita_core::report::{
+    Finding, Report, RequiredCheck, Risk, RunContext, RunError, Severity, Trigger,
+};
 
 use super::finding::run_finding;
 use super::scope;
+use super::session::requires_error;
 use crate::config_file;
 use crate::git;
+
+/// `garita risk`: the change's class read alone, with no check run and nothing written.
+pub(crate) fn read(dir: &Path, version: &str, base: Option<&str>) -> Report {
+    let root = match git::root(dir) {
+        Ok(root) => root,
+        Err(e) => {
+            return Report::not_run(RunContext::default(), RunError::environment(e.to_string()));
+        }
+    };
+    let commit = git::head_commit(&root).ok().flatten();
+    let tree = commit
+        .as_ref()
+        .and_then(|c| git::tree_of_commit(&root, c.as_str()).ok());
+    let context = RunContext {
+        commit: commit.map(|c| c.as_str().to_string()),
+        tree: tree.map(|t| t.as_str().to_string()),
+        ..RunContext::default()
+    };
+    let loaded = match config_file::load(&root) {
+        Ok(loaded) => loaded,
+        Err(e) => return Report::not_run(context, RunError::config(e.to_string())),
+    };
+    if let Some(error) = requires_error(&loaded.config, version) {
+        return Report::not_run(context, RunError::config(error));
+    }
+    let judged = judge(&root, base, false, loaded.config.risk.is_some());
+    let mut report = Report::from_run(
+        context,
+        Vec::new(),
+        judged.finding.into_iter().collect(),
+        None,
+    );
+    report.risk = Some(
+        judged
+            .risk
+            .map(|risk| risk.with_required(required_at_ci(&loaded.config))),
+    );
+    report
+}
+
+/// The checks the `ci` trigger runs that can block, with no status since none ran.
+fn required_at_ci(config: &Config) -> Vec<RequiredCheck> {
+    config
+        .checks
+        .iter()
+        .filter(|c| c.on.contains(&Trigger::Ci) && !c.advisory)
+        .map(|c| RequiredCheck {
+            check: c.name.clone(),
+            system: 0,
+            status: None,
+        })
+        .collect()
+}
 
 /// The report's `risk`, and a finding saying why the class could not be read when it could not.
 pub(crate) struct Judged {

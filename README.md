@@ -30,7 +30,8 @@ Silicon.
   this machine.
 - A `risk` section in the config names the repository's own risk classes and the paths each covers.
   `garita run` matches the change against the policy on its merge base and reports the class, who
-  must approve it, and whether the checks it requires passed.
+  must approve it, and whether the checks it requires passed. `garita risk [--base <ref>]` prints
+  the class alone: it runs no check and writes nothing.
 
 To install the latest release, with its build provenance checked by `gh`:
 
