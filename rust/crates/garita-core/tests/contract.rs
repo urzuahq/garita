@@ -136,6 +136,28 @@ fn risk_matched_report() -> Report {
     report
 }
 
+/// What `garita risk` prints: the class, and the checks the `ci` trigger would run.
+fn risk_read_report() -> Report {
+    let policy = Config::parse(RISK_POLICY).unwrap().risk.unwrap();
+    let context = RunContext {
+        commit: Some(COMMIT.into()),
+        tree: Some(TREE.into()),
+        ..RunContext::default()
+    };
+    let mut report = Report::from_run(context, Vec::new(), Vec::new(), None);
+    let required = ["lint", "types"]
+        .into_iter()
+        .map(|check| RequiredCheck {
+            check: check.into(),
+            system: 0,
+            status: None,
+        })
+        .collect();
+    let risk = policy.report(policy.match_change(&[Touched::path("docs/a.md")]));
+    report.risk = Some(Some(risk.with_required(required)));
+    report
+}
+
 fn risk_none_report() -> Report {
     let mut report = pass_report();
     report.risk = Some(None);
@@ -319,6 +341,7 @@ fn cases() -> Vec<(&'static str, serde_json::Value)> {
     vec![
         ("run-report.risk-matched", json(risk_matched_report())),
         ("run-report.risk-none", json(risk_none_report())),
+        ("run-report.risk-read", json(risk_read_report())),
         (
             "run-report.risk-base-unreadable",
             json(risk_base_unreadable_report()),

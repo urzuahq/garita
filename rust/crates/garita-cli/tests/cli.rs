@@ -5,7 +5,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use garita_core::argv::split;
-use garita_core::report::{ErrorKind, Report, RunStatus};
+use garita_core::report::{ErrorKind, Report, RequiredCheck, RiskSource, RunStatus};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -414,6 +414,125 @@ fn describe_prints_the_golden_and_nothing_else() {
     let golden: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(without_version(printed), golden);
+}
+
+fn risk_repo(t: &Temp, policy: &str) {
+    let repo = t.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let tool = t.tool("lint", "exit 1");
+    t.write(
+        ".garita/config.yaml",
+        &format!(
+            "schema_version: 1\n{policy}checks:\n  lint:\n    run: {tool}\n    on: [push, ci]\n  local:\n    run: {tool}\n    on: [commit]\n"
+        ),
+    );
+    t.write("a.txt", "a\n");
+    git(&repo, &["add", "-A"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "base",
+        ],
+    );
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    t.write("crates/core/a.rs", "x\n");
+    git(&repo, &["add", "-A"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "change",
+        ],
+    );
+}
+
+const RISK_POLICY: &str = "risk:\n  classes: [{ name: routine, approvals: 0 }, { name: core }]\n  default: routine\n  match: [{ paths: [\"crates/core/**\"], class: core }]\n";
+
+#[test]
+fn risk_prints_the_class_and_runs_no_check() {
+    let t = Temp::new();
+    risk_repo(&t, RISK_POLICY);
+    let out = garita(&t.repo(), &["risk"]);
+    let report = report_of(&out);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(report.status, RunStatus::Pass);
+    assert!(report.checks.is_empty());
+    assert_eq!((report.trigger, report.receipt.as_deref()), (None, None));
+    assert!(report.commit.is_some());
+    let risk = report.risk.unwrap().unwrap();
+    assert_eq!(risk.class.as_deref(), Some("core"));
+    assert_eq!(risk.source, RiskSource::Matched);
+    assert!(risk.needs_person);
+    assert_eq!((risk.reached, risk.met), (None, None));
+    assert_eq!(
+        risk.required,
+        [RequiredCheck {
+            check: "lint".into(),
+            system: 0,
+            status: None,
+        }]
+    );
+    assert!(!t.repo().join(".garita/receipts").exists());
+}
+
+#[test]
+fn risk_takes_a_base() {
+    let t = Temp::new();
+    risk_repo(&t, RISK_POLICY);
+    let out = garita(&t.repo(), &["risk", "--base", "feature"]);
+    let risk = report_of(&out).risk.unwrap().unwrap();
+    assert_eq!(risk.class.as_deref(), Some("routine"));
+    assert_eq!(risk.source, RiskSource::Default);
+    let out = garita(&t.repo(), &["risk", "--base", "nope"]);
+    let report = report_of(&out);
+    assert_eq!(report.status, RunStatus::Pass);
+    let risk = report.risk.unwrap().unwrap();
+    assert_eq!(risk.source, RiskSource::BaseUnreadable);
+    assert!(
+        report.findings[0].message.contains("`nope`"),
+        "{:?}",
+        report.findings
+    );
+}
+
+#[test]
+fn risk_is_null_and_passes_without_a_policy() {
+    let t = Temp::new();
+    risk_repo(&t, "");
+    let out = garita(&t.repo(), &["risk"]);
+    let stdout = String::from_utf8(out.stdout.clone()).unwrap();
+    assert!(stdout.contains("\"risk\":null"), "{stdout}");
+    assert_eq!(report_of(&out).status, RunStatus::Pass);
+}
+
+#[test]
+fn risk_is_not_run_outside_a_repository_or_without_a_config() {
+    let t = Temp::new();
+    let report = report_of(&garita(&t.repo(), &["risk"]));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Environment]));
+    assert_eq!(report.risk, None);
+    git(&t.repo(), &["init", "-q", "-b", "main"]);
+    let report = report_of(&garita(&t.repo(), &["risk"]));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Config]));
+    assert_eq!(
+        report.error.as_deref(),
+        Some(".garita/config.yaml does not exist")
+    );
+    let report = report_of(&garita(&t.repo(), &["risk", "--bogus"]));
+    assert_eq!(report.error_kinds, Some(vec![ErrorKind::Usage]));
 }
 
 #[test]

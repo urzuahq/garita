@@ -64,6 +64,26 @@
       "stdin": null
     },
     {
+      "args": [
+        {
+          "kind": "option",
+          "means": "The git ref a change is measured against.",
+          "name": "--base",
+          "repeatable": false,
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "metrics": [],
+      "name": "risk",
+      "profile": "run",
+      "safe": true,
+      "scopes": [
+        "base-ref"
+      ],
+      "stdin": null
+    },
+    {
       "args": [],
       "metrics": [],
       "name": "doctor",

@@ -86,6 +86,11 @@ pub fn run(request: &Request, clock: &dyn Clock) -> Outcome {
     session::run(request, clock)
 }
 
+/// `garita risk`: the change's risk class against `base`, with no check run and nothing written.
+pub fn risk(dir: &std::path::Path, version: &str, base: Option<&str>) -> Report {
+    risk::read(dir, version, base)
+}
+
 /// The report as one line of compact JSON.
 pub fn to_json(report: &Report) -> String {
     serde_json::to_string(report).unwrap_or_else(|e| {
